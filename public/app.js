@@ -509,6 +509,51 @@ $('cmpMetric').addEventListener('click', e => {
   for (const btn of $('cmpMetric').children) btn.classList.toggle('on', btn === b);
 });
 
+// Lap-synced traces: per car, samples keyed by lap distance for the current and last completed lap
+let cmpAxis = 'time', cmpLapView = 'cur', cmpHoverX = null;
+const lapTraces = new Map(); // idx -> {lap, cur: [{d, speed, thr, brk, gear}], last: [...], lastLap}
+function setTabs(id, attr, value) {
+  for (const btn of $(id).children) btn.classList.toggle('on', btn.dataset[attr] === value);
+}
+$('cmpAxis').addEventListener('click', e => {
+  const b = e.target.closest('button');
+  if (!b) return;
+  cmpAxis = b.dataset.a;
+  setTabs('cmpAxis', 'a', cmpAxis);
+  $('cmpLap').hidden = cmpAxis !== 'dist';
+  $('cmpChartLbl').textContent = cmpAxis === 'dist' ? 'Lap-synced trace · by distance' : 'Live trace · last 20 s';
+});
+$('cmpLap').addEventListener('click', e => {
+  const b = e.target.closest('button');
+  if (!b) return;
+  cmpLapView = b.dataset.l;
+  setTabs('cmpLap', 'l', cmpLapView);
+});
+$('cmpCanvas').addEventListener('pointermove', e => { cmpHoverX = e.offsetX; });
+$('cmpCanvas').addEventListener('pointerleave', () => { cmpHoverX = null; });
+
+function recordLapTrace(idx, t, lap) {
+  const dist = lap.m_lapDistance, lapNum = lap.m_currentLapNum;
+  let lt = lapTraces.get(idx);
+  if (!lt) { lt = {lap: lapNum, cur: [], last: [], lastLap: null}; lapTraces.set(idx, lt); }
+  if (lapNum !== lt.lap) {
+    // keep the finished lap only if it was mostly recorded (we may have joined mid-lap)
+    if (lt.cur.length > 20) { lt.last = lt.cur; lt.lastLap = lt.lap; }
+    lt.cur = [];
+    lt.lap = lapNum;
+  }
+  if (!(dist >= 0)) return; // before the start line on lap 1
+  let prev = lt.cur[lt.cur.length - 1];
+  if (prev && dist < prev.d - 30) {
+    // flashback / rewind: drop the part of the lap that was undone
+    lt.cur = lt.cur.filter(p => p.d <= dist);
+    prev = lt.cur[lt.cur.length - 1];
+  }
+  if (!prev || dist - prev.d >= 2) {
+    lt.cur.push({d: dist, speed: t.m_speed, thr: t.m_throttle, brk: t.m_brake, gear: t.m_gear});
+  }
+}
+
 function renderPicker(s) {
   const rivals = s.rivals || [];
   const html = rivals.map(r => {
@@ -591,6 +636,7 @@ function renderCompare(s) {
     trail.push({t: now, speed: t.m_speed, thr: t.m_throttle, brk: t.m_brake, gear: t.m_gear});
     while (trail.length && now - trail[0].t > CMP_SECONDS * 1000) trail.shift();
     cmpTrails.set(d.idx, trail);
+    if (d.lap) recordLapTrace(d.idx, t, d.lap);
   }
 
   // best values across the compared drivers get highlighted
@@ -656,6 +702,25 @@ function renderCompare(s) {
   });
 }
 
+// nearest sample to `key` in a list sorted by `field` (binary search)
+function nearest(pts, field, key) {
+  let lo = 0, hi = pts.length - 1;
+  if (hi < 0) return null;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (pts[mid][field] < key) lo = mid + 1; else hi = mid;
+  }
+  const a = pts[Math.max(0, lo - 1)], b = pts[lo];
+  return Math.abs(a[field] - key) <= Math.abs(b[field] - key) ? a : b;
+}
+const metricValue = (p, m) => (m === 'gear' ? Math.max(0, p.gear) : p[m]);
+const fmtMetric = (v, m) => (m === 'speed' ? Math.round(v) + ' km/h' : m === 'gear' ? (v ? String(v) : 'N') : Math.round(v * 100) + '%');
+const fmtDelta = (v, m) => {
+  const sign = v > 0 ? '+' : v < 0 ? '−' : '±';
+  const abs = Math.abs(v);
+  return sign + (m === 'speed' ? Math.round(abs) : m === 'gear' ? abs : Math.round(abs * 100) + '%');
+};
+
 function drawCompareChart() {
   const cv = $('cmpCanvas');
   const w = cv.clientWidth, h = cv.clientHeight;
@@ -664,37 +729,121 @@ function drawCompareChart() {
   if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) { cv.width = w * dpr; cv.height = h * dpr; }
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, w, h);
-  const span = CMP_SECONDS * 1000, now = performance.now();
-  const trails = cmpCols.map(c => cmpTrails.get(c.idx) || []);
+  const byDist = cmpAxis === 'dist';
+  const now = performance.now();
+
+  // series per slot: points sorted by the x field ('t' for time, 'd' for distance)
+  const series = cmpCols.map(c => {
+    if (!byDist) return cmpTrails.get(c.idx) || [];
+    const lt = lapTraces.get(c.idx);
+    return lt ? (cmpLapView === 'last' ? lt.last : lt.cur) : [];
+  });
+  const field = byDist ? 'd' : 't';
+  let xMin, xMax;
+  if (byDist) {
+    let seen = 0;
+    for (const pts of series) if (pts.length) seen = Math.max(seen, pts[pts.length - 1].d);
+    xMin = 0;
+    xMax = (latest && latest.session && latest.session.trackLength) || Math.max(seen, 1000);
+  } else {
+    xMax = now; xMin = now - CMP_SECONDS * 1000;
+  }
+
   let max = cmpMetric === 'speed' ? 350 : cmpMetric === 'gear' ? 8 : 1;
-  if (cmpMetric === 'speed') for (const tr of trails) for (const p of tr) max = Math.max(max, p.speed);
-  const padL = 44, padT = 8, padB = 18, plotW = w - padL - 8, plotH = h - padT - padB;
+  if (cmpMetric === 'speed') for (const pts of series) for (const p of pts) max = Math.max(max, p.speed);
+  const padL = 44, padR = 8, padT = 8, padB = 18, plotW = w - padL - padR, plotH = h - padT - padB;
+  const xOf = v => padL + ((v - xMin) / (xMax - xMin)) * plotW;
   const yOf = v => padT + plotH - (v / max) * plotH;
-  // grid + labels
+
+  // grid + axis labels
   ctx.font = `600 10px ${DISPLAY_FONT}`; ctx.fillStyle = '#7a8195'; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
   ctx.strokeStyle = '#171a24'; ctx.lineWidth = 1;
   const ticks = cmpMetric === 'gear' ? [0, 2, 4, 6, 8] : [0, .25, .5, .75, 1].map(f => f * max);
   for (const v of ticks) {
     const y = Math.round(yOf(v)) + .5;
-    ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(w - 8, y); ctx.stroke();
-    const label = cmpMetric === 'speed' ? Math.round(v) : cmpMetric === 'gear' ? v : Math.round(v * 100) + '%';
-    ctx.fillText(label, padL - 8, y);
+    ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(w - padR, y); ctx.stroke();
+    ctx.fillText(cmpMetric === 'speed' ? Math.round(v) : cmpMetric === 'gear' ? v : Math.round(v * 100) + '%', padL - 8, y);
   }
   ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
-  for (let sec = 0; sec <= CMP_SECONDS; sec += 5) {
-    ctx.fillText(sec ? `-${sec}s` : 'now', padL + plotW - (sec / CMP_SECONDS) * plotW, h - 4);
+  if (byDist) {
+    const step = xMax > 4000 ? 1000 : 500;
+    for (let d = 0; d <= xMax; d += step) {
+      const x = xOf(d);
+      ctx.strokeStyle = '#141720'; ctx.beginPath(); ctx.moveTo(Math.round(x) + .5, padT); ctx.lineTo(Math.round(x) + .5, padT + plotH); ctx.stroke();
+      ctx.fillText(d ? (d / 1000).toFixed(d % 1000 ? 1 : 0) + ' km' : 'START', x, h - 4);
+    }
+  } else {
+    for (let sec = 0; sec <= CMP_SECONDS; sec += 5) ctx.fillText(sec ? `-${sec}s` : 'now', xOf(now - sec * 1000), h - 4);
   }
-  trails.forEach((tr, k) => {
-    if (tr.length < 2) return;
+
+  // traces
+  series.forEach((pts, k) => {
+    if (pts.length < 2) return;
     ctx.beginPath();
-    tr.forEach((p, i) => {
-      const x = padL + plotW - ((now - p.t) / span) * plotW;
-      const v = cmpMetric === 'gear' ? Math.max(0, p.gear) : p[cmpMetric];
-      const y = yOf(v);
-      i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
-    });
+    let started = false;
+    for (let i = 0; i < pts.length; i++) {
+      const p = pts[i];
+      // don't join across gaps in the recorded lap (we joined mid-lap, or skipped samples)
+      const gap = byDist && i && p.d - pts[i - 1].d > 60;
+      const x = xOf(p[field]), y = yOf(metricValue(p, cmpMetric));
+      if (!started || gap) { ctx.moveTo(x, y); started = true; } else ctx.lineTo(x, y);
+    }
     ctx.strokeStyle = SLOT_COLORS[k]; ctx.lineWidth = 2; ctx.lineJoin = 'round';
     ctx.shadowColor = SLOT_COLORS[k]; ctx.shadowBlur = 6; ctx.stroke(); ctx.shadowBlur = 0;
+  });
+
+  if (byDist && series.every(p => p.length < 2)) {
+    ctx.fillStyle = '#7a8195'; ctx.textAlign = 'center'; ctx.font = `600 12px ${DISPLAY_FONT}`;
+    ctx.fillText(cmpLapView === 'last' ? 'NO COMPLETED LAP RECORDED YET — KEEP COMPARE OPEN FOR A FULL LAP' : 'WAITING FOR CARS TO CROSS THE LINE',
+      padL + plotW / 2, padT + plotH / 2);
+  }
+
+  // hover crosshair: every driver's value at the same point, with the delta to the reference (first) driver
+  if (cmpHoverX == null || cmpHoverX < padL || cmpHoverX > padL + plotW) return;
+  const key = xMin + ((cmpHoverX - padL) / plotW) * (xMax - xMin);
+  const tolerance = byDist ? 40 : 300; // metres / ms
+  const rows = [];
+  let refVal = null;
+  series.forEach((pts, k) => {
+    const p = nearest(pts, field, key);
+    const ok = p && Math.abs(p[field] - key) <= tolerance;
+    const v = ok ? metricValue(p, cmpMetric) : null;
+    if (k === 0) refVal = v;
+    const r = latest && latest.rivals && latest.rivals.find(x => x.idx === cmpCols[k].idx);
+    rows.push({k, v, name: r ? r.name.slice(0, 12).toUpperCase() : '—', y: v == null ? null : yOf(v)});
+  });
+  ctx.strokeStyle = 'rgba(236, 238, 243, .35)'; ctx.setLineDash([3, 3]);
+  ctx.beginPath(); ctx.moveTo(cmpHoverX + .5, padT); ctx.lineTo(cmpHoverX + .5, padT + plotH); ctx.stroke();
+  ctx.setLineDash([]);
+  for (const r of rows) {
+    if (r.y == null) continue;
+    ctx.beginPath(); ctx.arc(cmpHoverX, r.y, 4, 0, Math.PI * 2);
+    ctx.fillStyle = SLOT_COLORS[r.k]; ctx.fill(); ctx.lineWidth = 1.5; ctx.strokeStyle = '#07080b'; ctx.stroke();
+  }
+  // readout box
+  const title = byDist ? `${Math.round(key)} m` : `${((now - key) / 1000).toFixed(1)} s ago`;
+  ctx.font = `600 11px ${DISPLAY_FONT}`;
+  const lineH = 15, boxW = 190, boxH = 10 + lineH * (rows.length + 1);
+  let bx = cmpHoverX + 12;
+  if (bx + boxW > w - padR) bx = cmpHoverX - 12 - boxW;
+  const by = padT + 4;
+  ctx.fillStyle = 'rgba(10, 11, 16, .92)'; ctx.strokeStyle = '#2b3042'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.roundRect(bx, by, boxW, boxH, 6); ctx.fill(); ctx.stroke();
+  ctx.textAlign = 'left'; ctx.fillStyle = '#7a8195';
+  ctx.fillText(title, bx + 10, by + 4 + lineH - 3);
+  rows.forEach((r, i) => {
+    const y = by + 4 + lineH * (i + 2) - 3;
+    ctx.fillStyle = SLOT_COLORS[r.k]; ctx.fillRect(bx + 10, y - 8, 3, 10);
+    ctx.fillStyle = '#eceef3'; ctx.textAlign = 'left'; ctx.fillText(r.name, bx + 18, y);
+    ctx.textAlign = 'right';
+    const val = r.v == null ? '–' : fmtMetric(r.v, cmpMetric);
+    ctx.fillText(val, bx + boxW - (r.k && refVal != null && r.v != null ? 58 : 10), y);
+    if (r.k && refVal != null && r.v != null) {
+      const dlt = r.v - refVal;
+      ctx.fillStyle = dlt > 0 ? '#1fd166' : dlt < 0 ? '#ff2d1f' : '#7a8195';
+      if (cmpMetric === 'brk') ctx.fillStyle = '#7a8195';
+      ctx.fillText(fmtDelta(dlt, cmpMetric), bx + boxW - 10, y);
+    }
   });
 }
 
@@ -712,7 +861,7 @@ function render(s) {
 
   if (s.session) {
     const se = s.session;
-    if (se.sessionUID !== sessionUID) { sessionUID = se.sessionUID; track = new Map(); car = null; bestLap = 0; }
+    if (se.sessionUID !== sessionUID) { sessionUID = se.sessionUID; track = new Map(); car = null; bestLap = 0; lapTraces.clear(); cmpTrails.clear(); }
     $('track').textContent = se.track;
     $('weather').textContent = WEATHER[se.weather] || '—';
     $('trackTemp').textContent = se.trackTemp;

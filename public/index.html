@@ -144,9 +144,17 @@
   </div>
   <div class="cmpchart">
     <div class="cmpchead">
-      <span class="lbl">Live trace · last 20 s</span>
+      <span class="lbl" id="cmpChartLbl">Live trace · last 20 s</span>
+      <div class="cmpctrls">
+      <div class="tabs" id="cmpAxis" title="Plot against time, or against distance around the lap so corners line up">
+        <button data-a="time" class="on">LIVE TIME</button><button data-a="dist">LAP DISTANCE</button>
+      </div>
+      <div class="tabs" id="cmpLap" hidden>
+        <button data-l="cur" class="on">CURRENT LAP</button><button data-l="last">LAST LAP</button>
+      </div>
       <div class="tabs" id="cmpMetric">
         <button data-m="speed" class="on">SPEED</button><button data-m="thr">THROTTLE</button><button data-m="brk">BRAKE</button><button data-m="gear">GEAR</button>
+      </div>
       </div>
     </div>
     <canvas id="cmpCanvas"></canvas>

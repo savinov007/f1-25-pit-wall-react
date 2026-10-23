@@ -576,3 +576,6 @@ body.popup-drag, body.popup-drag * { cursor: grabbing !important; user-select: n
   .dmbox .dmg { display: grid; }
 }
 
+.cmpctrls { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
+.tabs[hidden] { display: none; }
+#cmpCanvas { cursor: crosshair; }

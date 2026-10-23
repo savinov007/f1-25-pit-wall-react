@@ -313,6 +313,7 @@ function startUdp() {
         trackId: pk.m_trackId,
         track: TRACKS[pk.m_trackId] ? TRACKS[pk.m_trackId].name : 'Unknown',
         totalLaps: pk.m_totalLaps,
+        trackLength: pk.m_trackLength,
         weather: pk.m_weather,
         trackTemp: pk.m_trackTemperature,
         airTemp: pk.m_airTemperature,
@@ -371,7 +372,7 @@ function startDemo() {
     const throttle = corner < 0.5 ? 1 : 0.2;
     const brake = corner > 0.8 ? 0.8 : 0;
     if (lapNum > 1 && lapNum !== lastLap) lastLap = lapNum;
-    state.session = {track: 'Demo Circuit', trackId: -1, totalLaps: 5, weather: 0, trackTemp: 34, airTemp: 24, sessionType: 15, sessionUID: 'demo'};
+    state.session = {track: 'Demo Circuit', trackId: -1, totalLaps: 5, trackLength: 5000, weather: 0, trackTemp: 34, airTemp: 24, sessionType: 15, sessionUID: 'demo'};
     state.telemetry = {
       m_speed: speed, m_gear: gear, m_engineRPM: 7000 + (speed % 40) * 100 + gear * 150,
       m_throttle: throttle, m_brake: brake, m_steer: Math.sin(a * 3) * 0.7, m_drs: corner < 0.2 ? 1 : 0,
@@ -385,7 +386,7 @@ function startDemo() {
       m_lastLapTimeInMS: lastLap ? LAP_MS - 120 : 0, m_currentLapTimeInMS: t % LAP_MS,
       m_sector1TimeInMS: t % LAP_MS > LAP_MS / 3 ? 9800 : 0, m_sector2TimeInMS: t % LAP_MS > (2 * LAP_MS) / 3 ? 10100 : 0,
       m_sector: Math.min(2, Math.floor(((t % LAP_MS) / LAP_MS) * 3)), m_carPosition: 3, m_currentLapNum: lapNum,
-      m_pitStatus: 0, m_currentLapInvalid: 0,
+      m_pitStatus: 0, m_currentLapInvalid: 0, m_lapDistance: ((t % LAP_MS) / LAP_MS) * 5000,
     };
     state.status = {
       m_fuelInTank: 60 - t / 4000, m_fuelCapacity: 110, m_visualTyreCompound: 17, m_actualTyreCompound: 17, m_tyresAgeLaps: lapNum,
