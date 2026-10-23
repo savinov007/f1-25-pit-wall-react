@@ -158,7 +158,32 @@
     return {text: 'holding the gap', cls: 'dim'};
   }
 
+  // --- UDP format 2026 (F1 25: 2026 Season Pack) ---
+  // ERS deploy mode label: mode 3 is "Overtake" in the 2025 format and "Boost" in 2026
+  const ersModeName = (mode, format) => (mode === 3 && format >= 2026 ? 'Boost' : ERS_MODES[mode] || '');
+  // [start, end] lap fractions -> [startM, endM] distance ranges; a zone that wraps past the line splits in two
+  function zoneRanges(zones, trackLength) {
+    if (!trackLength) return [];
+    const out = [];
+    for (const [a, b] of zones || []) {
+      if (a === b) continue;
+      if (b > a) out.push([a * trackLength, b * trackLength]);
+      else out.push([a * trackLength, trackLength], [0, b * trackLength]);
+    }
+    return out;
+  }
+  // DRS / overtake badge: 2026-regulation cars have overtake mode instead of DRS
+  function boostBadge(t, t2) {
+    if (t2 && t2.m_2026Regulations) {
+      return {label: 'OVERTAKE', on: !!t2.m_overtakeActive, avail: !t2.m_overtakeActive && !!t2.m_overtakeAvailable};
+    }
+    return {label: 'DRS', on: !!(t && t.m_drs), avail: false};
+  }
+  // active aero wing mode, or null when the car has none available
+  const aeroLabel = t2 => (t2 && t2.m_activeAeroAvailable ? (t2.m_activeAeroMode === 1 ? 'STRAIGHT' : 'CORNER') : null);
+
   return {
+    ersModeName, zoneRanges, boostBadge, aeroLabel,
     WEATHER, ERS_MODES, COMPOUNDS, TYRES, CAR_PARTS, DMG_KEYS, DMG_COLORS, TRACK_BUCKET_M,
     tempColor, wearColor, dmgLevel, cap, fmtTime, fmtSector, fmtGap, esc, fmtClock, gapOk, leaderGap,
     learnTrack, recordLapTrace, nearest, metricValue, fmtMetric, fmtDelta,

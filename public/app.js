@@ -4,6 +4,7 @@ const {
   tempColor, wearColor, dmgLevel, cap, fmtTime, fmtSector, fmtGap, esc, fmtClock, gapOk, leaderGap,
   learnTrack, recordLapTrace, nearest, metricValue, fmtMetric, fmtDelta,
   tyreProjection, fmtLaps, lapsColor, fmtS, fmtRate, nameOf, rejoinEstimate, battleTrend,
+  ersModeName, zoneRanges, boostBadge, aeroLabel,
 } = PitLib;
 const ERS_MAX = 4000000;
 const TRACE_SECONDS = 10;
@@ -128,11 +129,26 @@ const mainCar = createCar($('tyregrid'));
 const mainDamage = createDamage($('dmg'));
 
 // --- Shared renderers for the dashboard and the driver modal ---
-function renderDriving(t, prefix, trail) {
+// DRS badge (or overtake mode for 2026 cars), plus the active aero badge when there is one
+function renderBadges(drs, aero, t, t2) {
+  const badge = boostBadge(t, t2);
+  drs.textContent = badge.label;
+  drs.classList.toggle('on', badge.on);
+  drs.classList.toggle('avail', badge.avail);
+  if (!aero) return;
+  const label = aeroLabel(t2);
+  aero.hidden = !label;
+  if (label) {
+    aero.textContent = label;
+    aero.classList.toggle('on', label === 'STRAIGHT');
+  }
+}
+
+function renderDriving(t, prefix, trail, t2) {
   idFor(prefix, 'speed').textContent = t.m_speed;
   idFor(prefix, 'gear').textContent = t.m_gear === 0 ? 'N' : t.m_gear < 0 ? 'R' : t.m_gear;
   idFor(prefix, 'rpm').textContent = t.m_engineRPM;
-  idFor(prefix, 'drs').classList.toggle('on', !!t.m_drs);
+  renderBadges(idFor(prefix, 'drs'), idFor(prefix, 'aero'), t, t2);
   idFor(prefix, 'thr').style.height = t.m_throttle * 100 + '%';
   idFor(prefix, 'brk').style.height = t.m_brake * 100 + '%';
   idFor(prefix, 'steer').style.left = 50 + t.m_steer * 45 + '%';
@@ -141,7 +157,11 @@ function renderDriving(t, prefix, trail) {
   while (trail.length && now - trail[0].t > TRACE_SECONDS * 1000) trail.shift();
 }
 
-function renderStatus(st, prefix) {
+// ERS mode label, with the 2026 harvest limit per lap when the game sends one
+const ersModeText = (st, format) =>
+  ersModeName(st.m_ersDeployMode, format) + (st.m_ersHarvestedLimitPerLap > 0 ? ` · ${(st.m_ersHarvestedLimitPerLap / 1e6).toFixed(1)} MJ/lap` : '');
+
+function renderStatus(st, prefix, format) {
   const [name, color] = COMPOUNDS[st.m_visualTyreCompound] || ['–', '#888'];
   idFor(prefix, 'cname').textContent = name;
   idFor(prefix, 'cdot').style.borderColor = color;
@@ -154,7 +174,7 @@ function renderStatus(st, prefix) {
   const ersPct = (st.m_ersStoreEnergy / ERS_MAX) * 100;
   idFor(prefix, 'ers').style.width = Math.max(0, Math.min(100, ersPct)) + '%';
   idFor(prefix, 'ersTxt').textContent = Math.round(ersPct) + '%';
-  idFor(prefix, 'ersMode').textContent = ERS_MODES[st.m_ersDeployMode] || '';
+  idFor(prefix, 'ersMode').textContent = ersModeText(st, format);
 }
 
 // --- Rolling pedal traces ---
@@ -228,6 +248,29 @@ function drawMap() {
     mctx.strokeStyle = '#1c2030'; mctx.lineWidth = 12; mctx.stroke();
     mctx.strokeStyle = '#2b3042'; mctx.lineWidth = 8; mctx.stroke();
     mctx.strokeStyle = 'rgba(225, 6, 0, .75)'; mctx.lineWidth = 1.5; mctx.stroke();
+  }
+
+  // 2026: active aero zones (cyan) and DRS zones (green) along the learned outline
+  const se = latest && latest.session;
+  const drawZones = (ranges, color) => {
+    if (!ranges.length) return;
+    mctx.strokeStyle = color; mctx.lineWidth = 4;
+    for (const [from, to] of ranges) {
+      mctx.beginPath();
+      let prev = null;
+      for (const k of keys) {
+        const d = k * TRACK_BUCKET_M;
+        if (d < from || d > to) { prev = null; continue; }
+        const p = track.get(k);
+        if (prev !== null && k - prev <= 4) mctx.lineTo(px(p), py(p)); else mctx.moveTo(px(p), py(p));
+        prev = k;
+      }
+      mctx.stroke();
+    }
+  };
+  if (se && keys.length > 1) {
+    drawZones(zoneRanges(se.aeroZones, se.trackLength), 'rgba(51, 214, 232, .9)');
+    drawZones(zoneRanges(se.drsZones, se.trackLength), 'rgba(31, 209, 102, .9)');
   }
 
   mctx.font = `700 11px ${DISPLAY_FONT}`; mctx.textAlign = 'center';
@@ -306,7 +349,7 @@ function renderRivals(s) {
     const [cname, ccolor] = COMPOUNDS[r.compound] || ['–', '#888'];
     return `<div class="srow${r.player ? ' me' : ''}${out ? ' out' : ''}" data-idx="${r.idx}">
       <span class="p">${r.pos}</span><span class="team" style="background:${esc(r.color)}"></span>
-      <span class="n" title="${esc(r.team)}">${esc(r.name)}${r.human && !r.telemetryPublic ? `<small>#${r.num}</small>` : ''}${r.pit ? '<span class="tag pit">PIT</span>' : ''}${r.penalty ? `<span class="tag pen">+${r.penalty}s</span>` : ''}</span>
+      <span class="n" title="${esc(r.team)}">${esc(r.name)}${r.human && !r.telemetryPublic ? `<small>#${r.num}</small>` : ''}${r.pit ? '<span class="tag pit">PIT</span>' : ''}${r.overtake ? '<span class="tag ot">OT</span>' : ''}${r.wrongWay ? '<span class="tag ww">WRONG WAY</span>' : ''}${r.penalty ? `<span class="tag pen">+${r.penalty}s</span>` : ''}</span>
       <span class="g">${gapText}</span><span class="l${best && r.best && r.best === fastest ? ' fastest' : ''}">${fmtTime(best ? r.best : r.last)}</span>
       <span class="t"><i style="border-color:${ccolor}" title="${cname}"></i>${r.age}</span></div>`;
   }).join('');
@@ -364,8 +407,8 @@ function renderDriver(s) {
   note.hidden = !restricted;
   if (restricted) note.textContent = 'This driver\'s telemetry is set to Restricted, so the game sends empty values for them.';
 
-  renderDriving(t, 'dm', dmSamples);
-  if (d.status) renderStatus(d.status, 'dm');
+  renderDriving(t, 'dm', dmSamples, d.telemetry2);
+  if (d.status) renderStatus(d.status, 'dm', s.session && s.session.packetFormat);
   dmCar.update(t, d.damage);
   if (d.damage) dmDamage.update(d.damage);
   const l = d.lap;
@@ -604,7 +647,7 @@ function renderCompare(s) {
     f.ccspd.textContent = t.m_speed;
     f.ccgear.textContent = t.m_gear === 0 ? 'N' : t.m_gear < 0 ? 'R' : t.m_gear;
     f.ccrpm.textContent = t.m_engineRPM;
-    f.ccdrs.classList.toggle('on', !!t.m_drs);
+    renderBadges(f.ccdrs, null, t, d.telemetry2);
     f.ccthr.style.width = t.m_throttle * 100 + '%';
     f.ccthrv.textContent = Math.round(t.m_throttle * 100) + '%';
     f.ccbrk.style.width = t.m_brake * 100 + '%';
@@ -624,7 +667,7 @@ function renderCompare(s) {
       const ersPct = (st.m_ersStoreEnergy / ERS_MAX) * 100;
       f.ccersb.style.width = Math.max(0, Math.min(100, ersPct)) + '%';
       f.ccers.textContent = Math.round(ersPct) + '%';
-      f.ccersm.textContent = ERS_MODES[st.m_ersDeployMode] || '';
+      f.ccersm.textContent = ersModeText(st, s.session && s.session.packetFormat);
     }
     col.car.update(t, d.damage);
     if (d.damage) col.damage.update(d.damage);
@@ -886,17 +929,21 @@ function render(s) {
     $('trackTemp').textContent = se.trackTemp;
     $('airTemp').textContent = se.airTemp;
     $('totalLaps').textContent = se.totalLaps || '–';
+    $('fmtChip').hidden = !(se.packetFormat >= 2026);
+    $('reaction').hidden = !(se.reactionTime > 0);
+    if (se.reactionTime > 0) $('reaction').textContent = `REACTION ${se.reactionTime.toFixed(3)}s`;
+    $('mapLegend').hidden = !((se.aeroZones && se.aeroZones.length) || (se.drsZones && se.drsZones.length));
   }
 
   const t = s.telemetry;
   if (t) {
-    renderDriving(t, '', samples);
+    renderDriving(t, '', samples, s.telemetry2);
     const lit = Math.round(((t.m_revLightsPercent || 0) / 100) * 15);
     [...rev.children].forEach((el, i) => el.classList.toggle('on', i < lit));
   }
   if (t || s.damage) mainCar.update(t, s.damage);
   if (s.damage) mainDamage.update(s.damage);
-  if (s.status) renderStatus(s.status, '');
+  if (s.status) renderStatus(s.status, '', s.session && s.session.packetFormat);
 
   const l = s.lap;
   if (l) {
@@ -916,6 +963,7 @@ function render(s) {
     ['s1', 's2', 's3'].forEach((id, i) => $(id).classList.toggle('active', l.m_sector === i));
     $('invalid').hidden = !l.m_currentLapInvalid;
     $('pit').hidden = !l.m_pitStatus;
+    $('wrongWay').hidden = !(s.telemetry2 && s.telemetry2.m_drivingWrongWay);
   }
 
   if (s.motion) {

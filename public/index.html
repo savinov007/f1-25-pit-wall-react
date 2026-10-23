@@ -15,6 +15,7 @@
   <div class="brand"><span class="stripes"><i></i><i></i><i></i></span><span class="wordmark">PIT<b>WALL</b></span></div>
   <div class="session">
     <span class="chip track"><span id="track">—</span></span>
+    <span class="chip fmt" id="fmtChip" hidden title="UDP format 2026 (F1 25: 2026 Season Pack)">F1 26</span>
     <span class="chip"><span id="weather">—</span></span>
     <span class="chip">TRACK <b id="trackTemp">–</b>°</span>
     <span class="chip">AIR <b id="airTemp">–</b>°</span>
@@ -35,7 +36,7 @@
     <div class="speedrow">
       <div class="gear"><div class="lbl">GEAR</div><div id="gear">N</div></div>
       <div class="speed"><div id="speed">0</div><div class="lbl">KM/H</div></div>
-      <div class="rpm"><div class="lbl">RPM</div><div id="rpm">0</div><div id="drs" class="drs">DRS</div></div>
+      <div class="rpm"><div class="lbl">RPM</div><div id="rpm">0</div><div id="drs" class="drs">DRS</div><div id="aero" class="drs aero" hidden>CORNER</div></div>
     </div>
     <div class="pedals">
       <div class="pedal"><div class="bar"><i id="thr" class="thr"></i></div><span>THR</span></div>
@@ -58,10 +59,10 @@
   <div class="split" data-dir="x" role="separator" aria-orientation="vertical" aria-label="Resize columns" tabindex="0"></div>
   <div class="col" id="c2">
   <section class="card lap" id="p-lap">
-    <h2><span>Lap timing</span><span class="flags"><span id="invalid" class="flag" hidden>LAP INVALID</span><span id="pit" class="flag blue" hidden>IN PIT</span></span></h2>
+    <h2><span>Lap timing</span><span class="flags"><span id="invalid" class="flag" hidden>LAP INVALID</span><span id="pit" class="flag blue" hidden>IN PIT</span><span id="wrongWay" class="flag" hidden>WRONG WAY</span></span></h2>
     <div class="lapinfo">
       <div class="posbox"><span>P</span><b id="pos">–</b></div>
-      <div class="lapcount"><span class="lbl">LAP</span><b><span id="lapNum">–</span><small>/<span id="totalLaps">–</span></small></b></div>
+      <div class="lapcount"><span class="lbl">LAP</span><b><span id="lapNum">–</span><small>/<span id="totalLaps">–</span></small></b><small id="reaction" class="reaction" hidden></small></div>
     </div>
     <div class="curbox"><div class="lbl">CURRENT LAP</div><div class="cur" id="cur">0:00.000</div></div>
     <div class="times">
@@ -76,7 +77,7 @@
   </section>
   <div class="split" data-dir="y" role="separator" aria-orientation="horizontal" aria-label="Resize sections" tabindex="0"></div>
   <section class="card map" id="p-map">
-    <h2><span>Track map</span></h2>
+    <h2><span>Track map</span><span class="maplegend" id="mapLegend" hidden><i class="lz aero"></i>ACTIVE AERO<i class="lz drsz"></i>DRS</span></h2>
     <canvas id="map"></canvas>
     <div class="g"><span>G-LAT <b id="gLat">0.0</b></span><span>G-LONG <b id="gLong">0.0</b></span></div>
   </section>
@@ -114,7 +115,7 @@
         <div class="dmspeed">
           <div class="gear"><div class="lbl">GEAR</div><div id="dmGear">N</div></div>
           <div class="speed"><div id="dmSpeed">0</div><div class="lbl">KM/H</div></div>
-          <div class="rpm"><div class="lbl">RPM</div><div id="dmRpm">0</div><div id="dmDrs" class="drs">DRS</div></div>
+          <div class="rpm"><div class="lbl">RPM</div><div id="dmRpm">0</div><div id="dmDrs" class="drs">DRS</div><div id="dmAero" class="drs aero" hidden>CORNER</div></div>
         </div>
         <div class="pedals">
           <div class="pedal"><div class="bar"><i id="dmThr" class="thr"></i></div><span>THR</span></div>
@@ -180,7 +181,7 @@
       <div class="ipline"><span>UDP IP Address</span><b id="waitIp">–</b></div>
       <div><span>UDP Port</span><b id="waitPort">20777</b></div>
       <div><span>UDP Send Rate</span><b>20Hz</b></div>
-      <div><span>UDP Format</span><b>2025</b></div>
+      <div><span>UDP Format</span><b>2026 <small>(F1 26) or 2025</small></b></div>
     </div>
     <p class="alt" id="waitAlt"></p>
     <p class="alt">Game on this Mac? Use <b>127.0.0.1</b>. Then start a session — this screen closes when data arrives.</p>

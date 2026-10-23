@@ -23,17 +23,20 @@ function localIps() {
 }
 
 const minutesToMs = (msPart, minutes) => (msPart || 0) + (minutes || 0) * 60000;
-const validIdx = v => Number.isInteger(v) && v >= 0 && v < 22;
+const MAX_CARS = 24; // UDP format 2026; 22 before
+const validIdx = v => Number.isInteger(v) && v >= 0 && v < MAX_CARS;
 
-// The 2026 season pack uses team ids 220+. 220 Mercedes, 221 Ferrari, 222 Red Bull and 228 McLaren are
-// confirmed against live drivers; the rest follow the same order as the 2025 ids (inferred, not from the spec).
-const TEAMS_2026 = {229: {name: 'Audi', color: '#F50537'}, 230: {name: 'Cadillac', color: '#B8B8C0'}};
+// Team ids per the F1 25 2026 Season Pack spec. Format 2026 sends uint16 ids (476 Mercedes '26 ...
+// 486 Cadillac '26); format 2025 truncates them to uint8, so the same teams arrive as 220-230.
 function teamFor(id) {
-  const teams = TEAMS[2025] || {};
-  if (teams[id]) return teams[id];
-  if (TEAMS_2026[id]) return TEAMS_2026[id];
-  return id >= 220 && id < 229 ? teams[id - 220] : null;
+  const t26 = TEAMS[2026] || {}, t25 = TEAMS[2025] || {};
+  if (id >= 256) return t26[id] || null;
+  if (t25[id]) return t25[id];
+  return t26[id + 256] || null;
 }
+
+// lap fractions of the active aero zones in use (full or partial set) and the DRS zones
+const zones = (list, count) => (list || []).slice(0, count || 0).map(z => [z.m_zoneStart, z.m_zoneEnd]);
 
 // --- Demo data: a synthetic field on an elliptical track so the page can be checked without the game ---
 const DEMO_DRIVERS = [
@@ -55,7 +58,7 @@ function demoRivals(t, lapNum) {
   return cars.map((c, i) => ({
     idx: i, pos: i + 1, name: c.name || c[0], num: c.num || 10 + i, team: c.team || c[1], color: c.color || c[2],
     lapNum, last: 90000 + i * 180, best: 89000 + ((i * 37) % 9) * 150, gapFront: i ? 400 + ((i * 377 + t / 7) % 2200) : 0, gapLeader: i ? i * 1300 + ((t / 9) % 700) : 0,
-    pit: i === 7 ? 1 : 0, stops: i % 3 === 0 ? 1 : 0, penalty: i === 5 ? 5 : 0, result: 2,
+    pit: i === 7 ? 1 : 0, stops: i % 3 === 0 ? 1 : 0, penalty: i === 5 ? 5 : 0, result: 2, overtake: i === 4 ? 1 : 0, wrongWay: 0,
     compound: [16, 17, 18][i % 3], age: lapNum + (i % 4), player: c === you,
     ...demoPos(lapAngle + (2 - i) * 0.18),
     strategy: {
@@ -84,7 +87,11 @@ function demoFrame(t) {
   // spread of wear and damage so every colour band is visible in demo mode
   const wearRamp = base => Math.min(100, base + lapNum * 4 + ((t % DEMO_LAP_MS) / DEMO_LAP_MS) * 4);
   return {
-    session: {track: 'Demo Circuit', trackId: -1, totalLaps: 30, trackLength: 5000, pitIdealLap: 14, pitLatestLap: 19, pitRejoinPos: 7, weather: 0, trackTemp: 34, airTemp: 24, sessionType: 15, sessionUID: 'demo'},
+    session: {
+      track: 'Demo Circuit', trackId: -1, totalLaps: 30, trackLength: 5000, pitIdealLap: 14, pitLatestLap: 19, pitRejoinPos: 7,
+      weather: 0, trackTemp: 34, airTemp: 24, sessionType: 15, sessionUID: 'demo', packetFormat: 2026,
+      aeroStatus: 0, aeroZones: [[0.02, 0.14], [0.45, 0.6]], drsZones: [[0.95, 0.04]], reactionTime: 0.214,
+    },
     telemetry: {
       m_speed: speed, m_gear: gear, m_engineRPM: 7000 + (speed % 40) * 100 + gear * 150,
       m_throttle: throttle, m_brake: brake, m_steer: Math.sin(a * 3) * 0.7, m_drs: corner < 0.2 ? 1 : 0,
@@ -103,7 +110,13 @@ function demoFrame(t) {
     status: {
       m_fuelInTank: 60 - t / 4000, m_fuelCapacity: 110, m_visualTyreCompound: 17, m_actualTyreCompound: 17, m_tyresAgeLaps: lapNum,
       m_ersStoreEnergy: 4000000 * (0.5 + 0.5 * Math.sin(a)), m_ersDeployMode: 2, m_maxRPM: 13000,
-      m_fuelRemainingLaps: 1.4 - lapNum * 0.3,
+      m_fuelRemainingLaps: 1.4 - lapNum * 0.3, m_ersHarvestedLimitPerLap: 8500000,
+    },
+    // 2026 regulations: straight-mode aero on the straights, overtake mode when close behind
+    telemetry2: {
+      m_activeAeroMode: corner < 0.3 ? 1 : 0, m_activeAeroAvailable: 1, m_activeAeroActivationDistance: 0,
+      m_overtakeAvailable: corner < 0.5 ? 1 : 0, m_overtakeActive: corner < 0.2 ? 1 : 0, m_overtakeActivationDistance: 0,
+      m_2026Regulations: 1, m_drivingWrongWay: 0,
     },
     damage: {
       m_tyresWear: [wearRamp(14), wearRamp(18), wearRamp(33), wearRamp(56)],
@@ -138,6 +151,7 @@ function createDashboard(options = {}) {
     pps: 0,
     session: null,
     telemetry: null,
+    telemetry2: null,
     lap: null,
     status: null,
     damage: null,
@@ -152,7 +166,7 @@ function createDashboard(options = {}) {
   const observedBest = {};
   let bestSessionUID = null;
   // Latest full per-car arrays, merged into state.rivals.
-  const raw = {lap: null, status: null, parts: null, tel: null, dmg: null, mot: null, playerIdx: 0};
+  const raw = {lap: null, status: null, parts: null, tel: null, tel2: null, dmg: null, mot: null, playerIdx: 0};
   let packetCount = 0;
   let lastPacketAt = 0;
   const timers = [];
@@ -169,6 +183,7 @@ function createDashboard(options = {}) {
       const status = raw.status && raw.status[i];
       const mot = raw.mot && raw.mot[i];
       const team = part && teamFor(part.m_teamId);
+      const t2 = raw.tel2 && raw.tel2[i];
       rivals.push({
         idx: i,
         pos: l.m_carPosition,
@@ -194,6 +209,8 @@ function createDashboard(options = {}) {
         compound: status ? status.m_visualTyreCompound : 0,
         age: status ? status.m_tyresAgeLaps : 0,
         player: i === raw.playerIdx,
+        overtake: t2 ? t2.m_overtakeActive : 0,
+        wrongWay: t2 ? t2.m_drivingWrongWay : 0,
         strategy: strategy.summary(i),
       });
     });
@@ -289,13 +306,14 @@ function createDashboard(options = {}) {
       const h = demoHistory[Math.max(0, demoHistory.length - 1 - (idx % 12) * 6)] || state;
       const wearShift = (idx % 5) * 4;
       const damage = h.damage && {...h.damage, m_tyresWear: h.damage.m_tyresWear.map(w => Math.min(100, w + wearShift))};
-      return {idx, telemetry: h.telemetry, status: h.status, damage, lap: h.lap, motion: h.motion};
+      return {idx, telemetry: h.telemetry, telemetry2: h.telemetry2, status: h.status, damage, lap: h.lap, motion: h.motion};
     }
     const pick = arr => (arr && arr[idx] ? {...arr[idx]} : null);
     const m = raw.mot && raw.mot[idx];
     return {
       idx,
       telemetry: pick(raw.tel),
+      telemetry2: pick(raw.tel2),
       status: pick(raw.status),
       damage: pick(raw.dmg),
       lap: pick(raw.lap),
@@ -387,6 +405,11 @@ function createDashboard(options = {}) {
       raw.playerIdx = p.m_header.m_playerCarIndex;
       onPlayer(p, 'lap', (pk, i) => ({...pk.m_lapData[i]}));
     });
+    // UDP format 2026 only: active aero, overtake mode, wrong way
+    client.on(PACKETS.carTelemetry2, p => {
+      raw.tel2 = p.m_carTelemetry2Data;
+      onPlayer(p, 'telemetry2', (pk, i) => ({...pk.m_carTelemetry2Data[i]}));
+    });
     client.on(PACKETS.carStatus, p => {
       raw.status = p.m_carStatusData;
       onPlayer(p, 'status', (pk, i) => ({...pk.m_carStatusData[i]}));
@@ -434,6 +457,13 @@ function createDashboard(options = {}) {
           airTemp: pk.m_airTemperature,
           sessionType: pk.m_sessionType,
           sessionUID: uid,
+          packetFormat: pk.m_header.m_packetFormat,
+          aeroStatus: pk.m_activeAeroTrackStatus,
+          aeroZones: pk.m_activeAeroTrackStatus === 1
+            ? zones(pk.m_activeAeroZonesPartial, pk.m_numActiveAeroZonesPartial)
+            : zones(pk.m_activeAeroZonesFull, pk.m_numActiveAeroZonesFull),
+          drsZones: zones(pk.m_drsZones, pk.m_numDRSZones),
+          reactionTime: pk.m_startReactionTime,
         };
       })
     );
@@ -442,7 +472,7 @@ function createDashboard(options = {}) {
   function applyDemoFrame(t) {
     Object.assign(state, demoFrame(t));
     state.pps = 20;
-    demoHistory.push({telemetry: state.telemetry, status: state.status, damage: state.damage, lap: state.lap, motion: state.motion});
+    demoHistory.push({telemetry: state.telemetry, telemetry2: state.telemetry2, status: state.status, damage: state.damage, lap: state.lap, motion: state.motion});
     if (demoHistory.length > 120) demoHistory.shift();
   }
 
