@@ -509,3 +509,70 @@ canvas { display: block; width: 100%; }
   @container (max-width: 300px) { .cc .dmg { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 }
 
+/* ===== Rival telemetry: floating, draggable, resizable popup ===== */
+.dm { position: fixed; inset: 0; z-index: 20; padding: 0; display: block; background: none; backdrop-filter: none; pointer-events: none; }
+.dm[hidden] { display: none; }
+.dmbox {
+  position: absolute; pointer-events: auto; width: 820px; height: 600px; max-height: none; overflow: hidden;
+  display: flex; flex-direction: column; container-type: size;
+  padding: clamp(8px, 2cqh, 16px) clamp(12px, 2cqw, 20px) clamp(10px, 2cqh, 16px);
+  border-radius: 12px; border: 1px solid var(--line2);
+  box-shadow: 0 30px 70px -20px #000, 0 0 0 1px rgba(0, 0, 0, .6);
+}
+.dmhead { flex: none; cursor: grab; user-select: none; margin-bottom: clamp(4px, 1.4cqh, 12px); gap: 12px; touch-action: none; }
+.dmhead button { cursor: pointer; }
+body.popup-drag, body.popup-drag * { cursor: grabbing !important; user-select: none; }
+.dmbar { height: clamp(30px, 8cqh, 52px); }
+.dmpos { font-size: clamp(14px, 3.6cqh, 24px); } .dmpos b { font-size: clamp(30px, 8cqh, 54px); }
+.dmwho b { font-size: clamp(18px, 4.6cqh, 34px); } .dmwho small { font-size: clamp(11px, 2.2cqh, 15px); }
+.dmclose { width: 34px; height: 34px; font-size: 14px; }
+.dmnote { flex: none; margin-bottom: 8px; padding: 7px 10px; font-size: 12px; }
+.dmgrid { flex: 1; min-height: 0; gap: clamp(12px, 2.4cqw, 32px); }
+.dmcol { min-height: 0; overflow: hidden; gap: clamp(3px, 1.2cqh, 10px); }
+.dmcol > * { flex: none; }
+
+#dmGear { font-size: clamp(28px, min(11cqh, 6cqw), 90px); }
+#dmSpeed { font-size: clamp(44px, min(20cqh, 11cqw), 170px); }
+#dmRpm { font-size: clamp(14px, min(4cqh, 2.4cqw), 34px); }
+.dmbox .drs { width: 64px; padding: 2px 0; font-size: 12px; margin-top: 3px; }
+.dmbox .pedals { margin: 0; gap: 16px; }
+.dmbox .pedal .bar { width: 28px; height: clamp(34px, 9cqh, 80px); }
+.dmbox .pedal, .dmbox .steer { font-size: 10px; }
+#dmTrace { flex: 1 1 0; height: 0; min-height: 36px; }
+.dmlap { margin: 0; gap: 6px; }
+.dmlap > div { padding: clamp(3px, 1cqh, 9px) 10px; }
+.dmlap b { font-size: clamp(13px, 2.6cqh, 24px); }
+.dmbox .lbl { font-size: 10px; }
+
+.dmbox .compound.big { margin: 0; font-size: clamp(13px, 2.4cqh, 20px); }
+.dmbox .compound.big .cdot { width: 16px; height: 16px; border-width: 3px; }
+.dm .tyrebox { flex: 1 1 0; height: auto; min-height: 90px; }
+.dmbox .meters { margin: 0; gap: 14px; }
+.dmbox .mhead b { font-size: 14px; }
+.dmbox .seg { height: 9px; }
+.dmbox .dmg { margin: 0; gap: 4px; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.dmbox .dc { padding: 3px 7px 6px; gap: 0; border-radius: 6px; }
+.dmbox .dc span { font-size: 9px; letter-spacing: .08em; }
+.dmbox .dc b { font-size: clamp(13px, 2.4cqh, 20px); }
+.dmbox .dc .dbar { height: 2px; }
+
+.rz { position: absolute; z-index: 3; touch-action: none; }
+.rz-r { top: 14px; right: -3px; bottom: 14px; width: 9px; cursor: ew-resize; }
+.rz-b { left: 14px; right: 14px; bottom: -3px; height: 9px; cursor: ns-resize; }
+.rz-br { right: -3px; bottom: -3px; width: 18px; height: 18px; cursor: nwse-resize; }
+.rz-br::after { content: ""; position: absolute; right: 7px; bottom: 7px; width: 9px; height: 9px; border-right: 2px solid var(--line2); border-bottom: 2px solid var(--line2); border-radius: 0 0 3px 0; }
+.rz:hover::after { border-color: var(--red-hi); }
+.rz-r:hover { background: linear-gradient(90deg, transparent, rgba(255, 45, 31, .35)); }
+.rz-b:hover { background: linear-gradient(transparent, rgba(255, 45, 31, .35)); }
+
+/* shed rows as the popup gets shorter or narrower */
+@container (max-height: 470px) { .dmbox .dmg { display: none; } }
+@container (max-height: 380px) { .dmbox .meters { display: none; } .dmlap > div:nth-child(n+4) { display: none; } }
+@container (max-width: 640px) {
+  .dmgrid { grid-template-columns: 1fr; grid-auto-rows: max-content; align-content: start; overflow: auto; }
+  .dmcol { overflow: visible; }
+  #dmTrace { flex: none; height: 90px; }
+  .dm .tyrebox { flex: none; height: 230px; }
+  .dmbox .dmg { display: grid; }
+}
+

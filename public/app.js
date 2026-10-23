@@ -390,7 +390,6 @@ $('rows').addEventListener('pointerdown', e => {
   if (row) openDriver(Number(row.dataset.idx));
 });
 $('dmClose').onclick = closeDriver;
-dm.addEventListener('pointerdown', e => { if (e.target === dm) closeDriver(); });
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && !dm.hidden) closeDriver(); });
 
 function renderDriver(s) {
