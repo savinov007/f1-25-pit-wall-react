@@ -10,7 +10,7 @@ const HTTP_PORT = Number(process.env.PORT) || 3000;
 const UDP_PORT = Number(process.env.UDP_PORT) || 20777;
 const DEMO = process.argv.includes('--demo');
 const PUBLIC = path.join(__dirname, 'public');
-const MIME = {'.html': 'text/html', '.css': 'text/css', '.js': 'text/javascript'};
+const MIME = {'.html': 'text/html', '.css': 'text/css', '.js': 'text/javascript', '.svg': 'image/svg+xml'};
 
 function localIps() {
   const ips = [];
