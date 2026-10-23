@@ -7,11 +7,10 @@ const {F1TelemetryClient, constants} = require('./build/src');
 const {StrategyTracker} = require('./strategy');
 
 const {PACKETS, TRACKS, TEAMS} = constants;
-const HTTP_PORT = Number(process.env.PORT) || 3000;
-const UDP_PORT = Number(process.env.UDP_PORT) || 20777;
-const DEMO = process.argv.includes('--demo');
 const PUBLIC = path.join(__dirname, 'public');
 const MIME = {'.html': 'text/html', '.css': 'text/css', '.js': 'text/javascript', '.svg': 'image/svg+xml'};
+const REC_MAX_BYTES = 500 * 1024 * 1024;
+const MAX_COMPARE = 4;
 
 function localIps() {
   const ips = [];
@@ -23,32 +22,8 @@ function localIps() {
   return ips;
 }
 
-const state = {
-  connected: false,
-  hasData: false,
-  setup: {ips: localIps(), udpPort: UDP_PORT, demo: DEMO},
-  pps: 0,
-  session: null,
-  telemetry: null,
-  lap: null,
-  status: null,
-  damage: null,
-  motion: null,
-  rivals: [],
-  recording: {available: false, active: false},
-};
-
-const strategy = new StrategyTracker();
-
-// Latest full per-car arrays, merged into state.rivals.
-// Best lap per car idx: authoritative from sessionHistory packets, else the fastest last lap seen so far.
-const bestLaps = {};
-const observedBest = {};
-let bestSessionUID = null;
-
-const raw = {lap: null, status: null, parts: null, tel: null, dmg: null, mot: null, playerIdx: 0};
-
 const minutesToMs = (msPart, minutes) => (msPart || 0) + (minutes || 0) * 60000;
+const validIdx = v => Number.isInteger(v) && v >= 0 && v < 22;
 
 // The 2026 season pack uses team ids 220+. 220 Mercedes, 221 Ferrari, 222 Red Bull and 228 McLaren are
 // confirmed against live drivers; the rest follow the same order as the 2025 ids (inferred, not from the spec).
@@ -60,302 +35,21 @@ function teamFor(id) {
   return id >= 220 && id < 229 ? teams[id - 220] : null;
 }
 
-function buildRivals() {
-  if (!raw.lap) return [];
-  const rivals = [];
-  raw.lap.forEach((l, i) => {
-    const last = l.m_lastLapTimeInMS;
-    if (last > 0 && (!observedBest[i] || last < observedBest[i])) observedBest[i] = last;
-    // resultStatus 0 = invalid, 1 = inactive: slot isn't a car in this session
-    if (!l.m_carPosition || l.m_resultStatus < 2) return;
-    const part = raw.parts && raw.parts[i];
-    const status = raw.status && raw.status[i];
-    const mot = raw.mot && raw.mot[i];
-    const team = part && teamFor(part.m_teamId);
-    rivals.push({
-      idx: i,
-      pos: l.m_carPosition,
-      name: (part && part.m_name) || (i === raw.playerIdx ? 'YOU' : `Car ${i + 1}`),
-      num: part ? part.m_raceNumber : 0,
-      teamId: part ? part.m_teamId : -1,
-      human: part ? part.m_aiControlled === 0 : false,
-      telemetryPublic: part ? part.m_yourTelemetry === 1 : false,
-      team: team ? team.name : '',
-      color: team ? team.color : '#888888',
-      dist: l.m_lapDistance,
-      x: mot ? mot.m_worldPositionX : undefined,
-      z: mot ? mot.m_worldPositionZ : undefined,
-      lapNum: l.m_currentLapNum,
-      last: l.m_lastLapTimeInMS,
-      best: bestLaps[i] || observedBest[i] || 0,
-      gapFront: l.m_deltaToCarInFrontMSPart !== undefined ? minutesToMs(l.m_deltaToCarInFrontMSPart, l.m_deltaToCarInFrontMinutesPart) : l.m_deltaToCarInFrontInMS || 0,
-      gapLeader: l.m_deltaToRaceLeaderMSPart !== undefined ? minutesToMs(l.m_deltaToRaceLeaderMSPart, l.m_deltaToRaceLeaderMinutesPart) : l.m_deltaToRaceLeaderInMS || 0,
-      pit: l.m_pitStatus,
-      stops: l.m_numPitStops,
-      penalty: l.m_penalties,
-      result: l.m_resultStatus,
-      compound: status ? status.m_visualTyreCompound : 0,
-      age: status ? status.m_tyresAgeLaps : 0,
-      player: i === raw.playerIdx,
-      strategy: strategy.summary(i),
-    });
-  });
-  return rivals.sort((a, b) => a.pos - b.pos);
-}
-let packetCount = 0;
-let lastPacketAt = 0;
-
-// --- Session recording: raw UDP packets as JSON lines [msSinceStart, base64] (replay with replay.js) ---
-const REC_DIR = path.join(__dirname, 'recordings');
-const REC_MAX_BYTES = 500 * 1024 * 1024;
-const rec = {stream: null, file: null, startedAt: 0, packets: 0, bytes: 0, lastFile: null, lastBytes: 0, lastPackets: 0};
-
-function startRecording() {
-  if (rec.stream || DEMO) return;
-  fs.mkdirSync(REC_DIR, {recursive: true});
-  const name = `session-${new Date().toISOString().replace(/[:.]/g, '-')}.jsonl`;
-  rec.file = path.join(REC_DIR, name);
-  rec.stream = fs.createWriteStream(rec.file);
-  rec.stream.on('error', err => {
-    console.error(`Recording failed: ${err.message}`);
-    rec.stream = null;
-  });
-  rec.startedAt = Date.now();
-  rec.packets = 0;
-  rec.bytes = 0;
-  rec.stream.write(JSON.stringify({type: 'f1rec', version: 1, startedAt: new Date().toISOString(), udpPort: UDP_PORT}) + '\n');
-  console.log(`Recording to ${path.relative(__dirname, rec.file)}`);
-}
-
-function stopRecording() {
-  if (!rec.stream) return;
-  rec.stream.end();
-  rec.stream = null;
-  rec.lastFile = path.relative(__dirname, rec.file);
-  rec.lastBytes = rec.bytes;
-  rec.lastPackets = rec.packets;
-  console.log(`Saved ${rec.lastFile} (${rec.lastPackets} packets, ${(rec.lastBytes / 1048576).toFixed(1)} MB)`);
-}
-
-function recordPacket(msg) {
-  if (!rec.stream) return;
-  const line = `[${Date.now() - rec.startedAt},"${msg.toString('base64')}"]\n`;
-  rec.stream.write(line);
-  rec.packets++;
-  rec.bytes += line.length;
-  if (rec.bytes > REC_MAX_BYTES) {
-    console.warn('Recording hit the 500 MB limit, stopping');
-    stopRecording();
-  }
-}
-
-function recordingState() {
-  return {
-    available: !DEMO,
-    active: !!rec.stream,
-    seconds: rec.stream ? Math.floor((Date.now() - rec.startedAt) / 1000) : 0,
-    packets: rec.packets,
-    bytes: rec.bytes,
-    lastFile: rec.lastFile,
-    lastBytes: rec.lastBytes,
-    lastPackets: rec.lastPackets,
-  };
-}
-
-const server = http.createServer((req, res) => {
-  const name = req.url === '/' ? 'index.html' : path.normalize(req.url.split('?')[0]);
-  const file = path.join(PUBLIC, name);
-  if (!file.startsWith(PUBLIC)) {
-    res.writeHead(403).end();
-    return;
-  }
-  fs.readFile(file, (err, data) => {
-    if (err) {
-      res.writeHead(404).end('Not found');
-      return;
-    }
-    res.writeHead(200, {'Content-Type': MIME[path.extname(file)] || 'application/octet-stream'});
-    res.end(data);
-  });
-});
-const wss = new WebSocketServer({server});
-
-// Demo: rivals replay the player's recent telemetry with a per-car delay, so comparisons differ.
-const demoHistory = [];
-
-function buildDetail(idx) {
-  if (DEMO) {
-    const h = demoHistory[Math.max(0, demoHistory.length - 1 - (idx % 12) * 6)] || state;
-    const wearShift = (idx % 5) * 4;
-    const damage = h.damage && {...h.damage, m_tyresWear: h.damage.m_tyresWear.map(w => Math.min(100, w + wearShift))};
-    return {idx, telemetry: h.telemetry, status: h.status, damage, lap: h.lap, motion: h.motion};
-  }
-  const pick = arr => (arr && arr[idx] ? {...arr[idx]} : null);
-  const m = raw.mot && raw.mot[idx];
-  return {
-    idx,
-    telemetry: pick(raw.tel),
-    status: pick(raw.status),
-    damage: pick(raw.dmg),
-    lap: pick(raw.lap),
-    motion: m ? {gLat: m.m_gForceLateral, gLong: m.m_gForceLongitudinal} : null,
-  };
-}
-
-const MAX_COMPARE = 4;
-const validIdx = v => Number.isInteger(v) && v >= 0 && v < 22;
-
-wss.on('connection', ws => {
-  ws.selected = null;
-  ws.compare = [];
-  ws.on('message', data => {
-    try {
-      const msg = JSON.parse(data);
-      if ('select' in msg) {
-        ws.selected = Number.isInteger(msg.select) && msg.select >= 0 && msg.select < 22 ? msg.select : null;
-      }
-      if ('compare' in msg) {
-        ws.compare = Array.isArray(msg.compare) ? [...new Set(msg.compare.filter(validIdx))].slice(0, MAX_COMPARE) : [];
-      }
-      if ('record' in msg) (msg.record ? startRecording : stopRecording)();
-    } catch (err) {
-      // ignore malformed client messages
-    }
-  });
-});
-
-function broadcast() {
-  state.connected = DEMO || Date.now() - lastPacketAt < 3000;
-  state.hasData = DEMO || lastPacketAt > 0;
-  if (!DEMO) {
-    state.rivals = buildRivals();
-    state.pitLoss = strategy.pitLoss();
-  }
-  state.recording = recordingState();
-  const shared = JSON.stringify(state);
-  for (const ws of wss.clients) {
-    if (ws.readyState !== 1) continue;
-    if (ws.selected === null && !ws.compare.length) {
-      ws.send(shared);
-      continue;
-    }
-    const extra = {};
-    if (ws.selected !== null) extra.detail = buildDetail(ws.selected);
-    if (ws.compare.length) extra.compare = ws.compare.map(buildDetail);
-    ws.send(JSON.stringify({...state, ...extra}));
-  }
-}
-
-function onPlayer(packet, key, pick) {
-  packetCount++;
-  lastPacketAt = Date.now();
-  const idx = packet.m_header.m_playerCarIndex;
-  state[key] = pick(packet, idx);
-}
-
-function startUdp() {
-  const client = new F1TelemetryClient({port: UDP_PORT});
-
-  // A packet the parser can't handle must not kill the server; log it once per packet id.
-  const handleMessage = client.handleMessage.bind(client);
-  const reported = new Set();
-  client.handleMessage = msg => {
-    recordPacket(msg);
-    try {
-      handleMessage(msg);
-    } catch (err) {
-      const pid = msg[6];
-      if (reported.has(pid)) return;
-      reported.add(pid);
-      console.warn(
-        `Skipping unparsable packet id=${pid} len=${msg.length} format=${msg.readUInt16LE(0)} ` +
-          `game=${msg[3]}.${msg[4]} packetVersion=${msg[5]}: ${err.message}`
-      );
-    }
-  };
-
-  client.on(PACKETS.carTelemetry, p => {
-    raw.tel = p.m_carTelemetryData;
-    onPlayer(p, 'telemetry', (pk, i) => ({...pk.m_carTelemetryData[i]}));
-  });
-  client.on(PACKETS.lapData, p => {
-    raw.lap = p.m_lapData;
-    strategy.update(raw.lap, raw.dmg, raw.status, state.session && state.session.trackLength);
-    raw.playerIdx = p.m_header.m_playerCarIndex;
-    onPlayer(p, 'lap', (pk, i) => ({...pk.m_lapData[i]}));
-  });
-  client.on(PACKETS.carStatus, p => {
-    raw.status = p.m_carStatusData;
-    onPlayer(p, 'status', (pk, i) => ({...pk.m_carStatusData[i]}));
-  });
-  client.on(PACKETS.sessionHistory, p => {
-    const lapNum = p.m_bestLapTimeLapNum;
-    const lap = lapNum > 0 ? p.m_lapHistoryData[lapNum - 1] : null;
-    if (lap && lap.m_lapTimeInMS > 0) bestLaps[p.m_carIdx] = lap.m_lapTimeInMS;
-  });
-  client.on(PACKETS.participants, p => {
-    raw.parts = p.m_participants;
-    packetCount++;
-    lastPacketAt = Date.now();
-  });
-  client.on(PACKETS.carDamage, p => {
-    raw.dmg = p.m_carDamageData;
-    onPlayer(p, 'damage', (pk, i) => ({...pk.m_carDamageData[i]}));
-  });
-  client.on(PACKETS.motion, p => {
-    raw.mot = p.m_carMotionData;
-    onPlayer(p, 'motion', (pk, i) => {
-      const m = pk.m_carMotionData[i];
-      return {x: m.m_worldPositionX, z: m.m_worldPositionZ, gLat: m.m_gForceLateral, gLong: m.m_gForceLongitudinal};
-    });
-  });
-  client.on(PACKETS.session, p =>
-    onPlayer(p, 'session', pk => {
-      const uid = String(pk.m_header.m_sessionUID);
-      if (bestSessionUID !== null && uid !== bestSessionUID) {
-        strategy.reset();
-        for (const k of Object.keys(bestLaps)) delete bestLaps[k];
-        for (const k of Object.keys(observedBest)) delete observedBest[k];
-      }
-      bestSessionUID = uid;
-      return {
-        trackId: pk.m_trackId,
-        track: TRACKS[pk.m_trackId] ? TRACKS[pk.m_trackId].name : 'Unknown',
-        totalLaps: pk.m_totalLaps,
-        trackLength: pk.m_trackLength,
-        pitIdealLap: pk.m_pitStopWindowIdealLap,
-        pitLatestLap: pk.m_pitStopWindowLatestLap,
-        pitRejoinPos: pk.m_pitStopRejoinPosition,
-        weather: pk.m_weather,
-        trackTemp: pk.m_trackTemperature,
-        airTemp: pk.m_airTemperature,
-        sessionType: pk.m_sessionType,
-        sessionUID: uid,
-      };
-    })
-  );
-  client.start();
-  console.log(`Listening for F1 UDP telemetry on port ${UDP_PORT}`);
-  process.on('SIGINT', () => {
-    stopRecording();
-    client.stop();
-    process.exit(0);
-  });
-}
-
+// --- Demo data: a synthetic field on an elliptical track so the page can be checked without the game ---
 const DEMO_DRIVERS = [
   ['VERSTAPPEN', 'Red Bull Racing', '#3671C6'], ['NORRIS', 'McLaren', '#FF8000'], ['LECLERC', 'Ferrari', '#E80020'],
   ['PIASTRI', 'McLaren', '#FF8000'], ['HAMILTON', 'Ferrari', '#E80020'], ['RUSSELL', 'Mercedes', '#27F4D2'],
   ['ALONSO', 'Aston Martin', '#229971'], ['ANTONELLI', 'Mercedes', '#27F4D2'], ['GASLY', 'Alpine', '#0093CC'],
   ['ALBON', 'Williams', '#64C4FF'], ['TSUNODA', 'Red Bull Racing', '#3671C6'], ['HULKENBERG', 'Sauber', '#52E252'],
 ];
+const DEMO_LAP_MS = 30000;
 
 function demoPos(a) {
   return {x: Math.cos(a) * 400 + Math.cos(a * 2) * 60, z: Math.sin(a) * 250 + Math.sin(a * 3) * 40};
 }
 
 function demoRivals(t, lapNum) {
-  const lapAngle = ((t % 30000) / 30000) * Math.PI * 2;
+  const lapAngle = ((t % DEMO_LAP_MS) / DEMO_LAP_MS) * Math.PI * 2;
   const you = {name: 'YOU', team: 'Demo', color: '#e10600', num: 99};
   const cars = [...DEMO_DRIVERS.slice(0, 2), you, ...DEMO_DRIVERS.slice(2)];
   return cars.map((c, i) => ({
@@ -378,24 +72,20 @@ function demoRivals(t, lapNum) {
   }));
 }
 
-// Synthetic driver on an elliptical track so the page can be checked without the game.
-function startDemo() {
-  console.log('Demo mode: emitting synthetic telemetry');
-  const t0 = Date.now();
-  const LAP_MS = 30000;
-  let lastLap = 0;
-  setInterval(() => {
-    const t = Date.now() - t0;
-    const lapNum = Math.floor(t / LAP_MS) + 1;
-    const a = ((t % LAP_MS) / LAP_MS) * Math.PI * 2;
-    const corner = Math.abs(Math.sin(a * 3));
-    const speed = Math.round(120 + 190 * (1 - corner));
-    const gear = Math.max(1, Math.min(8, Math.round(speed / 40)));
-    const throttle = corner < 0.5 ? 1 : 0.2;
-    const brake = corner > 0.8 ? 0.8 : 0;
-    if (lapNum > 1 && lapNum !== lastLap) lastLap = lapNum;
-    state.session = {track: 'Demo Circuit', trackId: -1, totalLaps: 30, trackLength: 5000, pitIdealLap: 14, pitLatestLap: 19, pitRejoinPos: 7, weather: 0, trackTemp: 34, airTemp: 24, sessionType: 15, sessionUID: 'demo'};
-    state.telemetry = {
+// One demo frame for time t (ms since start): the player's telemetry plus the synthetic field.
+function demoFrame(t) {
+  const lapNum = Math.floor(t / DEMO_LAP_MS) + 1;
+  const a = ((t % DEMO_LAP_MS) / DEMO_LAP_MS) * Math.PI * 2;
+  const corner = Math.abs(Math.sin(a * 3));
+  const speed = Math.round(120 + 190 * (1 - corner));
+  const gear = Math.max(1, Math.min(8, Math.round(speed / 40)));
+  const throttle = corner < 0.5 ? 1 : 0.2;
+  const brake = corner > 0.8 ? 0.8 : 0;
+  // spread of wear and damage so every colour band is visible in demo mode
+  const wearRamp = base => Math.min(100, base + lapNum * 4 + ((t % DEMO_LAP_MS) / DEMO_LAP_MS) * 4);
+  return {
+    session: {track: 'Demo Circuit', trackId: -1, totalLaps: 30, trackLength: 5000, pitIdealLap: 14, pitLatestLap: 19, pitRejoinPos: 7, weather: 0, trackTemp: 34, airTemp: 24, sessionType: 15, sessionUID: 'demo'},
+    telemetry: {
       m_speed: speed, m_gear: gear, m_engineRPM: 7000 + (speed % 40) * 100 + gear * 150,
       m_throttle: throttle, m_brake: brake, m_steer: Math.sin(a * 3) * 0.7, m_drs: corner < 0.2 ? 1 : 0,
       m_revLightsPercent: Math.min(100, (speed % 40) * 2.5),
@@ -403,42 +93,418 @@ function startDemo() {
       m_tyresInnerTemperature: [98, 99, 96, 97],
       m_tyresPressure: [22.1, 22.3, 23.4, 23.5],
       m_brakesTemperature: [400 + brake * 400, 410 + brake * 400, 380 + brake * 300, 385 + brake * 300],
-    };
-    state.lap = {
-      m_lastLapTimeInMS: lastLap ? LAP_MS - 120 : 0, m_currentLapTimeInMS: t % LAP_MS,
-      m_sector1TimeInMS: t % LAP_MS > LAP_MS / 3 ? 9800 : 0, m_sector2TimeInMS: t % LAP_MS > (2 * LAP_MS) / 3 ? 10100 : 0,
-      m_sector: Math.min(2, Math.floor(((t % LAP_MS) / LAP_MS) * 3)), m_carPosition: 3, m_currentLapNum: lapNum,
-      m_pitStatus: 0, m_currentLapInvalid: 0, m_lapDistance: ((t % LAP_MS) / LAP_MS) * 5000,
-    };
-    state.status = {
+    },
+    lap: {
+      m_lastLapTimeInMS: lapNum > 1 ? DEMO_LAP_MS - 120 : 0, m_currentLapTimeInMS: t % DEMO_LAP_MS,
+      m_sector1TimeInMS: t % DEMO_LAP_MS > DEMO_LAP_MS / 3 ? 9800 : 0, m_sector2TimeInMS: t % DEMO_LAP_MS > (2 * DEMO_LAP_MS) / 3 ? 10100 : 0,
+      m_sector: Math.min(2, Math.floor(((t % DEMO_LAP_MS) / DEMO_LAP_MS) * 3)), m_carPosition: 3, m_currentLapNum: lapNum,
+      m_pitStatus: 0, m_currentLapInvalid: 0, m_lapDistance: ((t % DEMO_LAP_MS) / DEMO_LAP_MS) * 5000,
+    },
+    status: {
       m_fuelInTank: 60 - t / 4000, m_fuelCapacity: 110, m_visualTyreCompound: 17, m_actualTyreCompound: 17, m_tyresAgeLaps: lapNum,
       m_ersStoreEnergy: 4000000 * (0.5 + 0.5 * Math.sin(a)), m_ersDeployMode: 2, m_maxRPM: 13000,
       m_fuelRemainingLaps: 1.4 - lapNum * 0.3,
-    };
-    // spread of wear and damage so every colour band is visible in demo mode
-    const wearRamp = base => Math.min(100, base + lapNum * 4 + (t % LAP_MS) / LAP_MS * 4);
-    state.damage = {
+    },
+    damage: {
       m_tyresWear: [wearRamp(14), wearRamp(18), wearRamp(33), wearRamp(56)],
       m_frontLeftWingDamage: 12, m_frontRightWingDamage: 0, m_rearWingDamage: 0, m_floorDamage: 4,
       m_diffuserDamage: 0, m_sidepodDamage: 27, m_engineDamage: 3, m_gearBoxDamage: 0,
-    };
-    state.motion = {x: Math.cos(a) * 400 + Math.cos(a * 2) * 60, z: Math.sin(a) * 250 + Math.sin(a * 3) * 40, gLat: Math.sin(a * 3) * 3, gLong: brake ? -3 : 1};
-    state.pps = 20;
-    state.rivals = demoRivals(t, lapNum);
-    state.pitLoss = {ms: 21400, samples: 3};
-    demoHistory.push({telemetry: state.telemetry, status: state.status, damage: state.damage, lap: state.lap, motion: state.motion});
-    if (demoHistory.length > 120) demoHistory.shift();
-  }, 50);
+    },
+    motion: {...demoPos(a), gLat: Math.sin(a * 3) * 3, gLong: brake ? -3 : 1},
+    rivals: demoRivals(t, lapNum),
+    pitLoss: {ms: 21400, samples: 3},
+  };
 }
 
-server.listen(HTTP_PORT, () => console.log(`Dashboard: http://localhost:${HTTP_PORT}`));
-if (DEMO) startDemo();
-else startUdp();
+/**
+ * One dashboard instance: HTTP for the page, a WebSocket that pushes state ~30x/s, and either the UDP
+ * telemetry listener or the demo generator. Ports may be 0 (ephemeral) — read them back after start().
+ */
+function createDashboard(options = {}) {
+  const {
+    httpPort = 3000,
+    udpPort = 20777,
+    demo = false,
+    recDir = path.join(__dirname, 'recordings'),
+    broadcastMs = 33,
+    log = console,
+  } = options;
 
-setInterval(() => {
-  state.setup.ips = localIps();
-  state.pps = DEMO ? 20 : packetCount;
-  packetCount = 0;
-}, 1000);
-setInterval(broadcast, 33);
+  const state = {
+    connected: false,
+    hasData: false,
+    setup: {ips: localIps(), udpPort, demo},
+    pps: 0,
+    session: null,
+    telemetry: null,
+    lap: null,
+    status: null,
+    damage: null,
+    motion: null,
+    rivals: [],
+    recording: {available: false, active: false},
+  };
 
+  const strategy = new StrategyTracker();
+  // Best lap per car idx: authoritative from sessionHistory packets, else the fastest last lap seen so far.
+  const bestLaps = {};
+  const observedBest = {};
+  let bestSessionUID = null;
+  // Latest full per-car arrays, merged into state.rivals.
+  const raw = {lap: null, status: null, parts: null, tel: null, dmg: null, mot: null, playerIdx: 0};
+  let packetCount = 0;
+  let lastPacketAt = 0;
+  const timers = [];
+
+  function buildRivals() {
+    if (!raw.lap) return [];
+    const rivals = [];
+    raw.lap.forEach((l, i) => {
+      const last = l.m_lastLapTimeInMS;
+      if (last > 0 && (!observedBest[i] || last < observedBest[i])) observedBest[i] = last;
+      // resultStatus 0 = invalid, 1 = inactive: slot isn't a car in this session
+      if (!l.m_carPosition || l.m_resultStatus < 2) return;
+      const part = raw.parts && raw.parts[i];
+      const status = raw.status && raw.status[i];
+      const mot = raw.mot && raw.mot[i];
+      const team = part && teamFor(part.m_teamId);
+      rivals.push({
+        idx: i,
+        pos: l.m_carPosition,
+        name: (part && part.m_name) || (i === raw.playerIdx ? 'YOU' : `Car ${i + 1}`),
+        num: part ? part.m_raceNumber : 0,
+        teamId: part ? part.m_teamId : -1,
+        human: part ? part.m_aiControlled === 0 : false,
+        telemetryPublic: part ? part.m_yourTelemetry === 1 : false,
+        team: team ? team.name : '',
+        color: team ? team.color : '#888888',
+        dist: l.m_lapDistance,
+        x: mot ? mot.m_worldPositionX : undefined,
+        z: mot ? mot.m_worldPositionZ : undefined,
+        lapNum: l.m_currentLapNum,
+        last: l.m_lastLapTimeInMS,
+        best: bestLaps[i] || observedBest[i] || 0,
+        gapFront: l.m_deltaToCarInFrontMSPart !== undefined ? minutesToMs(l.m_deltaToCarInFrontMSPart, l.m_deltaToCarInFrontMinutesPart) : l.m_deltaToCarInFrontInMS || 0,
+        gapLeader: l.m_deltaToRaceLeaderMSPart !== undefined ? minutesToMs(l.m_deltaToRaceLeaderMSPart, l.m_deltaToRaceLeaderMinutesPart) : l.m_deltaToRaceLeaderInMS || 0,
+        pit: l.m_pitStatus,
+        stops: l.m_numPitStops,
+        penalty: l.m_penalties,
+        result: l.m_resultStatus,
+        compound: status ? status.m_visualTyreCompound : 0,
+        age: status ? status.m_tyresAgeLaps : 0,
+        player: i === raw.playerIdx,
+        strategy: strategy.summary(i),
+      });
+    });
+    return rivals.sort((a, b) => a.pos - b.pos);
+  }
+
+  // --- Session recording: raw UDP packets as JSON lines [msSinceStart, base64] (replay with replay.js) ---
+  const rec = {stream: null, file: null, startedAt: 0, packets: 0, bytes: 0, lastFile: null, lastBytes: 0, lastPackets: 0};
+
+  function startRecording() {
+    if (rec.stream || demo) return;
+    fs.mkdirSync(recDir, {recursive: true});
+    const name = `session-${new Date().toISOString().replace(/[:.]/g, '-')}.jsonl`;
+    rec.file = path.join(recDir, name);
+    rec.stream = fs.createWriteStream(rec.file);
+    rec.stream.on('error', err => {
+      log.error(`Recording failed: ${err.message}`);
+      rec.stream = null;
+    });
+    rec.startedAt = Date.now();
+    rec.packets = 0;
+    rec.bytes = 0;
+    rec.stream.write(JSON.stringify({type: 'f1rec', version: 1, startedAt: new Date().toISOString(), udpPort}) + '\n');
+    log.log(`Recording to ${path.relative(__dirname, rec.file)}`);
+  }
+
+  function stopRecording() {
+    if (!rec.stream) return Promise.resolve();
+    const stream = rec.stream;
+    rec.stream = null;
+    rec.lastFile = path.relative(__dirname, rec.file);
+    rec.lastBytes = rec.bytes;
+    rec.lastPackets = rec.packets;
+    log.log(`Saved ${rec.lastFile} (${rec.lastPackets} packets, ${(rec.lastBytes / 1048576).toFixed(1)} MB)`);
+    return new Promise(resolve => stream.end(resolve));
+  }
+
+  function recordPacket(msg) {
+    if (!rec.stream) return;
+    const line = `[${Date.now() - rec.startedAt},"${msg.toString('base64')}"]\n`;
+    rec.stream.write(line);
+    rec.packets++;
+    rec.bytes += line.length;
+    if (rec.bytes > REC_MAX_BYTES) {
+      log.warn('Recording hit the 500 MB limit, stopping');
+      stopRecording();
+    }
+  }
+
+  function recordingState() {
+    return {
+      available: !demo,
+      active: !!rec.stream,
+      seconds: rec.stream ? Math.floor((Date.now() - rec.startedAt) / 1000) : 0,
+      packets: rec.packets,
+      bytes: rec.bytes,
+      lastFile: rec.lastFile,
+      lastBytes: rec.lastBytes,
+      lastPackets: rec.lastPackets,
+      file: rec.stream ? rec.file : null,
+    };
+  }
+
+  const httpServer = http.createServer((req, res) => {
+    let name;
+    try {
+      name = req.url === '/' ? 'index.html' : path.normalize(decodeURIComponent(req.url.split('?')[0]));
+    } catch (err) {
+      res.writeHead(400).end('Bad request');
+      return;
+    }
+    const file = path.join(PUBLIC, name);
+    if (!file.startsWith(PUBLIC)) {
+      res.writeHead(403).end();
+      return;
+    }
+    fs.readFile(file, (err, data) => {
+      if (err) {
+        res.writeHead(404).end('Not found');
+        return;
+      }
+      res.writeHead(200, {'Content-Type': MIME[path.extname(file)] || 'application/octet-stream'});
+      res.end(data);
+    });
+  });
+  const wss = new WebSocketServer({server: httpServer});
+
+  // Demo: rivals replay the player's recent telemetry with a per-car delay, so comparisons differ.
+  const demoHistory = [];
+
+  function buildDetail(idx) {
+    if (demo) {
+      const h = demoHistory[Math.max(0, demoHistory.length - 1 - (idx % 12) * 6)] || state;
+      const wearShift = (idx % 5) * 4;
+      const damage = h.damage && {...h.damage, m_tyresWear: h.damage.m_tyresWear.map(w => Math.min(100, w + wearShift))};
+      return {idx, telemetry: h.telemetry, status: h.status, damage, lap: h.lap, motion: h.motion};
+    }
+    const pick = arr => (arr && arr[idx] ? {...arr[idx]} : null);
+    const m = raw.mot && raw.mot[idx];
+    return {
+      idx,
+      telemetry: pick(raw.tel),
+      status: pick(raw.status),
+      damage: pick(raw.dmg),
+      lap: pick(raw.lap),
+      motion: m ? {gLat: m.m_gForceLateral, gLong: m.m_gForceLongitudinal} : null,
+    };
+  }
+
+  function handleClientMessage(ws, data) {
+    try {
+      const msg = JSON.parse(data);
+      if ('select' in msg) ws.selected = validIdx(msg.select) ? msg.select : null;
+      if ('compare' in msg) {
+        ws.compare = Array.isArray(msg.compare) ? [...new Set(msg.compare.filter(validIdx))].slice(0, MAX_COMPARE) : [];
+      }
+      if ('record' in msg) (msg.record ? startRecording : stopRecording)();
+    } catch (err) {
+      // ignore malformed client messages
+    }
+  }
+
+  wss.on('connection', ws => {
+    ws.selected = null;
+    ws.compare = [];
+    ws.on('message', data => handleClientMessage(ws, data));
+  });
+
+  // Message for one client: the shared state, plus the driver it has open and the cars it compares.
+  function messageFor(client, shared) {
+    if (client.selected === null && !client.compare.length) return shared;
+    const extra = {};
+    if (client.selected !== null) extra.detail = buildDetail(client.selected);
+    if (client.compare.length) extra.compare = client.compare.map(buildDetail);
+    return JSON.stringify({...state, ...extra});
+  }
+
+  function refreshState() {
+    state.connected = demo || Date.now() - lastPacketAt < 3000;
+    state.hasData = demo || lastPacketAt > 0;
+    if (!demo) {
+      state.rivals = buildRivals();
+      state.pitLoss = strategy.pitLoss();
+    }
+    state.recording = recordingState();
+    return state;
+  }
+
+  function broadcast() {
+    const shared = JSON.stringify(refreshState());
+    for (const ws of wss.clients) {
+      if (ws.readyState === 1) ws.send(messageFor(ws, shared));
+    }
+  }
+
+  function onPlayer(packet, key, pick) {
+    packetCount++;
+    lastPacketAt = Date.now();
+    state[key] = pick(packet, packet.m_header.m_playerCarIndex);
+  }
+
+  // --- Telemetry: parse packets and fold them into state ---
+  const client = demo ? null : new F1TelemetryClient({port: udpPort});
+  const reported = new Set();
+
+  // Record, then parse; a packet the parser can't handle must not kill the server (logged once per packet id).
+  function handlePacket(msg) {
+    recordPacket(msg);
+    try {
+      parseMessage(msg);
+    } catch (err) {
+      const pid = msg[6];
+      if (reported.has(pid)) return;
+      reported.add(pid);
+      log.warn(
+        `Skipping unparsable packet id=${pid} len=${msg.length} format=${msg.length >= 2 ? msg.readUInt16LE(0) : '?'} ` +
+          `game=${msg[3]}.${msg[4]} packetVersion=${msg[5]}: ${err.message}`
+      );
+    }
+  }
+  const parseMessage = client ? client.handleMessage.bind(client) : () => {};
+  if (client) {
+    client.handleMessage = handlePacket;
+    client.on(PACKETS.carTelemetry, p => {
+      raw.tel = p.m_carTelemetryData;
+      onPlayer(p, 'telemetry', (pk, i) => ({...pk.m_carTelemetryData[i]}));
+    });
+    client.on(PACKETS.lapData, p => {
+      raw.lap = p.m_lapData;
+      strategy.update(raw.lap, raw.dmg, raw.status, state.session && state.session.trackLength);
+      raw.playerIdx = p.m_header.m_playerCarIndex;
+      onPlayer(p, 'lap', (pk, i) => ({...pk.m_lapData[i]}));
+    });
+    client.on(PACKETS.carStatus, p => {
+      raw.status = p.m_carStatusData;
+      onPlayer(p, 'status', (pk, i) => ({...pk.m_carStatusData[i]}));
+    });
+    client.on(PACKETS.sessionHistory, p => {
+      const lapNum = p.m_bestLapTimeLapNum;
+      const lap = lapNum > 0 ? p.m_lapHistoryData[lapNum - 1] : null;
+      if (lap && lap.m_lapTimeInMS > 0) bestLaps[p.m_carIdx] = lap.m_lapTimeInMS;
+    });
+    client.on(PACKETS.participants, p => {
+      raw.parts = p.m_participants;
+      packetCount++;
+      lastPacketAt = Date.now();
+    });
+    client.on(PACKETS.carDamage, p => {
+      raw.dmg = p.m_carDamageData;
+      onPlayer(p, 'damage', (pk, i) => ({...pk.m_carDamageData[i]}));
+    });
+    client.on(PACKETS.motion, p => {
+      raw.mot = p.m_carMotionData;
+      onPlayer(p, 'motion', (pk, i) => {
+        const m = pk.m_carMotionData[i];
+        return {x: m.m_worldPositionX, z: m.m_worldPositionZ, gLat: m.m_gForceLateral, gLong: m.m_gForceLongitudinal};
+      });
+    });
+    client.on(PACKETS.session, p =>
+      onPlayer(p, 'session', pk => {
+        const uid = String(pk.m_header.m_sessionUID);
+        if (bestSessionUID !== null && uid !== bestSessionUID) {
+          strategy.reset();
+          for (const k of Object.keys(bestLaps)) delete bestLaps[k];
+          for (const k of Object.keys(observedBest)) delete observedBest[k];
+        }
+        bestSessionUID = uid;
+        return {
+          trackId: pk.m_trackId,
+          track: TRACKS[pk.m_trackId] ? TRACKS[pk.m_trackId].name : 'Unknown',
+          totalLaps: pk.m_totalLaps,
+          trackLength: pk.m_trackLength,
+          pitIdealLap: pk.m_pitStopWindowIdealLap,
+          pitLatestLap: pk.m_pitStopWindowLatestLap,
+          pitRejoinPos: pk.m_pitStopRejoinPosition,
+          weather: pk.m_weather,
+          trackTemp: pk.m_trackTemperature,
+          airTemp: pk.m_airTemperature,
+          sessionType: pk.m_sessionType,
+          sessionUID: uid,
+        };
+      })
+    );
+  }
+
+  function applyDemoFrame(t) {
+    Object.assign(state, demoFrame(t));
+    state.pps = 20;
+    demoHistory.push({telemetry: state.telemetry, status: state.status, damage: state.damage, lap: state.lap, motion: state.motion});
+    if (demoHistory.length > 120) demoHistory.shift();
+  }
+
+  const ports = {http: httpPort, udp: udpPort};
+
+  async function start() {
+    await new Promise((resolve, reject) => {
+      httpServer.once('error', reject);
+      httpServer.listen(httpPort, resolve);
+    });
+    ports.http = httpServer.address().port;
+    log.log(`Dashboard: http://localhost:${ports.http}`);
+    if (demo) {
+      log.log('Demo mode: emitting synthetic telemetry');
+      const t0 = Date.now();
+      applyDemoFrame(0);
+      timers.push(setInterval(() => applyDemoFrame(Date.now() - t0), 50));
+    } else {
+      await new Promise(resolve => {
+        client.socket.once('listening', resolve);
+        client.start();
+      });
+      ports.udp = client.socket.address().port;
+      state.setup.udpPort = ports.udp;
+      log.log(`Listening for F1 UDP telemetry on port ${ports.udp}`);
+    }
+    timers.push(
+      setInterval(() => {
+        state.setup.ips = localIps();
+        state.pps = demo ? 20 : packetCount;
+        packetCount = 0;
+      }, 1000)
+    );
+    timers.push(setInterval(broadcast, broadcastMs));
+    return ports;
+  }
+
+  async function stop() {
+    timers.splice(0).forEach(clearInterval);
+    await stopRecording();
+    if (client && client.socket) await new Promise(resolve => client.socket.close(resolve));
+    for (const ws of wss.clients) ws.terminate();
+    await new Promise(resolve => wss.close(resolve));
+    await new Promise(resolve => httpServer.close(resolve));
+  }
+
+  return {
+    state, ports, start, stop, handlePacket, broadcast, refreshState, messageFor, handleClientMessage,
+    buildRivals, buildDetail, startRecording, stopRecording, recordingState, applyDemoFrame, strategy,
+  };
+}
+
+module.exports = {createDashboard, teamFor, minutesToMs, localIps, demoRivals, demoFrame, demoPos, MIME};
+
+if (require.main === module) {
+  const dashboard = createDashboard({
+    httpPort: Number(process.env.PORT) || 3000,
+    udpPort: Number(process.env.UDP_PORT) || 20777,
+    demo: process.argv.includes('--demo'),
+  });
+  dashboard.start();
+  process.on('SIGINT', async () => {
+    await dashboard.stop();
+    process.exit(0);
+  });
+}
