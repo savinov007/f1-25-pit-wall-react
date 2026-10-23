@@ -16,7 +16,7 @@ A live F1 25 telemetry dashboard ("Pit Wall") built on the `f1-udp-parser` TypeS
 | `public/app.js`, `layout.js`, `popup.js` | Page rendering, resizable sections, floating rival popup |
 | `test/` | Tests (Node's built-in runner); `test/fixtures/` holds real F1 25 packets |
 
-Run it with `npm start` (live, UDP 20777) or `npm run demo` (synthetic data), then open http://localhost:3000.
+Run it with `npm start` (live, UDP 20777), `npm run demo` (synthetic data) or `npm run replay:dash -- recordings/<file>.jsonl` (play a recording with on-page controls), then open http://localhost:3000.
 
 ## Rule: new functionality comes with tests
 

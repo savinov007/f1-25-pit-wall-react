@@ -322,7 +322,7 @@ function checkFormat(format) {
 
 function renderWait(s) {
   const box = $('wait');
-  box.hidden = s.hasData || !s.setup;
+  box.hidden = s.hasData || !s.setup || !!s.replay;
   if (box.hidden) return;
   const ips = s.setup.ips;
   $('waitIp').textContent = ips.length ? ips[0].address : 'no network found';
@@ -950,6 +950,7 @@ function render(s) {
   $('connText').textContent = s.connected ? 'LIVE' : s.hasData ? 'NO SIGNAL — PAUSED?' : 'WAITING FOR GAME';
   $('pps').textContent = s.pps;
   renderWait(s);
+  renderReplay(s);
 
   if (s.session) {
     const se = s.session;

@@ -34,6 +34,7 @@
     "start": "npm run build && node server.js",
     "listen": "node listen.js",
     "replay": "node replay.js",
+    "replay:dash": "npm run build && node server.js --replay",
     "demo": "npm run build && node server.js --demo",
     "build": "tsc",
     "build:link": "npm run build && npm link",

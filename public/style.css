@@ -654,3 +654,39 @@ body.popup-drag, body.popup-drag * { cursor: grabbing !important; user-select: n
 .fmtpick button.on { border-color: #e10600; background: rgba(225, 6, 0, .14); color: #fff; }
 .fmtpick.need button { animation: fmtneed 1.4s ease-in-out infinite; }
 @keyframes fmtneed { 50% { border-color: #e10600; } }
+
+/* replay mode: header badge, amber accent and the floating control popup */
+.replaychip { display: inline-flex; align-items: center; gap: 8px; color: #1a1300; background: var(--amber); border-color: var(--amber); }
+.replaychip i { width: 0; height: 0; border-left: 9px solid #1a1300; border-top: 6px solid transparent; border-bottom: 6px solid transparent; }
+.replaychip b { color: #1a1300; letter-spacing: .2em; }
+.replaychip span { font-weight: 600; letter-spacing: .06em; text-transform: none; }
+.replaychip.paused i { border: 0; width: 8px; height: 12px; border-left: 3px solid #1a1300; border-right: 3px solid #1a1300; }
+body.replaying header { border-bottom-color: var(--amber); box-shadow: 0 1px 0 var(--amber), 0 12px 24px -18px var(--amber); }
+body.replaying .dot.live { background: var(--amber); box-shadow: 0 0 8px var(--amber); }
+body.replaying #connText { color: var(--amber); }
+.rp {
+  position: fixed; z-index: 40; width: 390px; left: 50%; bottom: 18px; transform: translateX(-50%);
+  background: var(--card2); border: 1px solid var(--amber); border-radius: 12px; color: var(--text);
+  box-shadow: 0 20px 50px -12px #000, 0 0 0 1px rgba(0, 0, 0, .6);
+}
+.rp.placed { transform: none; }
+.rphead { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 10px 8px 14px;
+  cursor: grab; user-select: none; touch-action: none; border-bottom: 1px solid var(--line); }
+.rptitle { display: flex; align-items: center; gap: 8px; font: 700 13px/1 var(--f-display); letter-spacing: .2em; color: var(--amber); }
+.rptitle i { width: 8px; height: 8px; border-radius: 50%; background: var(--amber); animation: live 2s infinite; }
+.rptitle small { font: 500 11px var(--f-mono); letter-spacing: 0; color: var(--dim); max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rphead button, .rpbtns button, .rpspeeds button {
+  font: 600 13px/1 var(--f-ui); color: var(--text); background: rgba(255, 255, 255, .04); border: 1px solid var(--line2);
+  border-radius: 8px; cursor: pointer; padding: 8px 10px;
+}
+.rphead button:hover, .rpbtns button:hover, .rpspeeds button:hover { border-color: var(--amber); }
+.rpbody { padding: 12px 14px 14px; display: grid; gap: 12px; }
+.rp.collapsed .rpbody { display: none; }
+.rpscrub { display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: center; font: 500 12px var(--f-mono); color: var(--dim); }
+.rpscrub input { width: 100%; accent-color: var(--amber); }
+.rpbtns { display: flex; gap: 6px; justify-content: center; }
+.rpbtns .big { min-width: 56px; font-size: 18px; background: var(--amber); color: #1a1300; border-color: var(--amber); }
+.rpbtns .on { border-color: var(--amber); color: var(--amber); }
+.rpspeeds { display: flex; gap: 5px; justify-content: center; flex-wrap: wrap; }
+.rpspeeds button { padding: 6px 8px; font: 600 12px var(--f-mono); }
+.rpspeeds button.on { background: rgba(255, 176, 32, .18); border-color: var(--amber); color: var(--amber); }

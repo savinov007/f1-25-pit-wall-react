@@ -14,6 +14,7 @@
 <header>
   <div class="brand"><span class="stripes"><i></i><i></i><i></i></span><span class="wordmark">PIT<b>WALL</b></span></div>
   <div class="session">
+    <span class="chip replaychip" id="replayChip" hidden title="Playing back a recording, not live game data"><i></i><b>REPLAY</b><span id="replayInfo"></span></span>
     <span class="chip track"><span id="track">—</span></span>
     <span class="chip fmt" id="fmtChip" hidden title="UDP format 2026 (F1 25: 2026 Season Pack)">F1 26</span>
     <span class="chip"><span id="weather">—</span></span>
@@ -169,6 +170,20 @@
   </div>
   <div class="cmpcols" id="cmpCols"><div class="cmpempty">Pick drivers above to compare their telemetry</div></div>
 </div>
+<div id="rp" class="rp" hidden role="group" aria-label="Replay controls">
+  <div class="rphead" id="rpHead"><span class="rptitle"><i></i>REPLAY <small id="rpFile"></small></span><button type="button" id="rpMin" title="Collapse">–</button></div>
+  <div class="rpbody">
+    <div class="rpscrub"><span id="rpPos">0:00</span><input type="range" id="rpSeek" min="0" max="1000" value="0" step="1" aria-label="Position"><span id="rpDur">0:00</span></div>
+    <div class="rpbtns">
+      <button type="button" id="rpRestart" title="Back to start">⏮</button>
+      <button type="button" id="rpBack" title="Back 10 s">⏪ 10</button>
+      <button type="button" id="rpPlay" class="big" title="Play / pause">⏸</button>
+      <button type="button" id="rpFwd" title="Forward 10 s">10 ⏩</button>
+      <button type="button" id="rpLoop" title="Loop the recording">⟳</button>
+    </div>
+    <div class="rpspeeds" id="rpSpeeds"></div>
+  </div>
+</div>
 <div id="toast" class="toast" hidden></div>
 <div id="wait" class="wait" hidden>
   <div class="waitbox">
@@ -196,5 +211,6 @@
 <script src="app.js"></script>
 <script src="layout.js"></script>
 <script src="popup.js"></script>
+<script src="replaybar.js"></script>
 </body>
 </html>

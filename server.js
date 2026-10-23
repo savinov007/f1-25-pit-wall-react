@@ -5,6 +5,7 @@ const os = require('os');
 const {WebSocketServer} = require('ws');
 const {F1TelemetryClient, constants} = require('./build/src');
 const {StrategyTracker} = require('./strategy');
+const {loadRecording, createPlayer} = require('./replay');
 
 const {PACKETS, TRACKS, TEAMS} = constants;
 const PUBLIC = path.join(__dirname, 'public');
@@ -144,6 +145,7 @@ function createDashboard(options = {}) {
     httpPort = 3000,
     udpPort = 20777,
     demo = false,
+    replayFile = null,
     recDir = path.join(__dirname, 'recordings'),
     recMaxBytes = REC_MAX_BYTES,
     broadcastMs = 33,
@@ -154,6 +156,7 @@ function createDashboard(options = {}) {
     connected: false,
     hasData: false,
     setup: {ips: localIps(), udpPort, demo},
+    replay: null,
     pps: 0,
     session: null,
     telemetry: null,
@@ -268,7 +271,7 @@ function createDashboard(options = {}) {
 
   function recordingState() {
     return {
-      available: !demo,
+      available: !demo && !replayFile,
       active: !!rec.stream,
       seconds: rec.stream ? Math.floor((Date.now() - rec.startedAt) / 1000) : 0,
       packets: rec.packets,
@@ -335,6 +338,7 @@ function createDashboard(options = {}) {
         ws.compare = Array.isArray(msg.compare) ? [...new Set(msg.compare.filter(validIdx))].slice(0, MAX_COMPARE) : [];
       }
       if ('record' in msg) (msg.record ? startRecording : stopRecording)();
+      if (msg.replay && player) controlReplay(msg.replay);
     } catch (err) {
       // ignore malformed client messages
     }
@@ -355,8 +359,23 @@ function createDashboard(options = {}) {
     return JSON.stringify({...state, ...extra});
   }
 
+  // --- Replay: a recording played through the same pipeline as live packets, with player controls ---
+  let player = null;
+  function controlReplay({action, value}) {
+    const n = Number(value);
+    if (action === 'toggle') player.toggle();
+    else if (action === 'play') player.play();
+    else if (action === 'pause') player.pause();
+    else if (action === 'speed' && n > 0) player.setSpeed(n);
+    else if (action === 'seek' && Number.isFinite(n)) player.seek(n);
+    else if (action === 'skip' && Number.isFinite(n)) player.skip(n);
+    else if (action === 'restart') player.restart();
+    else if (action === 'loop') player.setLoop(!!value);
+  }
+
   function refreshState() {
-    state.connected = demo || Date.now() - lastPacketAt < 3000;
+    state.replay = player ? {file: path.basename(replayFile), ...player.status()} : null;
+    state.connected = demo || !!player || Date.now() - lastPacketAt < 3000;
     state.hasData = demo || lastPacketAt > 0;
     if (!demo) {
       state.rivals = buildRivals();
@@ -485,6 +504,7 @@ function createDashboard(options = {}) {
   const ports = {http: httpPort, udp: udpPort};
 
   async function start() {
+    const recording = replayFile ? loadRecording(replayFile) : null; // a bad file fails before anything listens
     await new Promise((resolve, reject) => {
       httpServer.once('error', reject);
       httpServer.listen(httpPort, resolve);
@@ -496,6 +516,9 @@ function createDashboard(options = {}) {
       const t0 = Date.now();
       applyDemoFrame(0);
       timers.push(setInterval(() => applyDemoFrame(Date.now() - t0), 50));
+    } else if (replayFile) {
+      log.log(`Replay mode: ${recording.packets.length} packets from ${replayFile}`);
+      player = createPlayer(recording.packets, {send: handlePacket});
     } else {
       await new Promise(resolve => {
         client.socket.once('listening', resolve);
@@ -521,6 +544,7 @@ function createDashboard(options = {}) {
     if (stopped) return;
     stopped = true;
     timers.splice(0).forEach(clearInterval);
+    if (player) player.stop();
     await stopRecording();
     if (client && client.socket) await new Promise(resolve => client.socket.close(resolve));
     for (const ws of wss.clients) ws.terminate();
@@ -530,19 +554,29 @@ function createDashboard(options = {}) {
 
   return {
     state, ports, httpServer, start, stop, handlePacket, broadcast, refreshState, messageFor, handleClientMessage,
-    buildRivals, buildDetail, startRecording, stopRecording, recordingState, applyDemoFrame, strategy,
+    buildRivals, buildDetail, controlReplay, getPlayer: () => player, startRecording, stopRecording, recordingState, applyDemoFrame, strategy,
   };
 }
 
 module.exports = {createDashboard, teamFor, minutesToMs, localIps, demoRivals, demoFrame, demoPos, MIME};
 
 if (require.main === module) {
+  const at = process.argv.indexOf('--replay');
+  const replayFile = at >= 0 ? process.argv[at + 1] : null;
+  if (at >= 0 && (!replayFile || replayFile.startsWith('--'))) {
+    console.error('Usage: node server.js --replay <recording.jsonl>');
+    process.exit(1);
+  }
   const dashboard = createDashboard({
     httpPort: Number(process.env.PORT) || 3000,
     udpPort: Number(process.env.UDP_PORT) || 20777,
     demo: process.argv.includes('--demo'),
+    replayFile,
   });
-  dashboard.start();
+  dashboard.start().catch(err => {
+    console.error(err.message);
+    process.exit(1);
+  });
   process.on('SIGINT', async () => {
     await dashboard.stop();
     process.exit(0);

@@ -76,7 +76,94 @@ function replay(packets, {port = 20777, host = '127.0.0.1', speed = 1, loop = fa
   };
 }
 
-module.exports = {parseArgs, loadRecording, replay, USAGE};
+const SPEEDS = [0.25, 0.5, 1, 2, 3, 5, 10];
+
+/**
+ * A controllable player for a loaded recording: hands each packet to send(buf) at its original timing / speed.
+ * Pause, resume, change speed, seek and loop all keep a single position clock (ms into the recording).
+ * `now` and `timers` are injectable so tests can drive it without waiting.
+ */
+function createPlayer(packets, {send, speed = 1, loop = false, autoplay = true, now = Date.now, tickMs = 10} = {}) {
+  const duration = packets[packets.length - 1].t;
+  let playing = false, finished = false, rate = speed, looping = loop;
+  let basePos = 0, baseAt = now(), next = 0, timer = null;
+
+  const position = () => {
+    if (!playing) return basePos;
+    return Math.min(duration, basePos + (now() - baseAt) * rate);
+  };
+  const rebase = pos => { basePos = Math.max(0, Math.min(duration, pos)); baseAt = now(); };
+
+  function tick() {
+    if (!playing) return;
+    const pos = position();
+    while (next < packets.length && packets[next].t <= pos) send(packets[next++].buf);
+    if (next >= packets.length) {
+      if (looping) { rebase(0); next = 0; return; }
+      basePos = duration;
+      playing = false;
+      finished = true;
+      clearInterval(timer);
+      timer = null;
+    }
+  }
+  function startClock() {
+    if (!timer) timer = setInterval(tick, tickMs);
+  }
+
+  const player = {
+    play() {
+      if (finished) { rebase(0); next = 0; finished = false; }
+      if (playing) return;
+      rebase(basePos);
+      playing = true;
+      startClock();
+    },
+    pause() {
+      if (!playing) return;
+      basePos = position();
+      playing = false;
+      clearInterval(timer);
+      timer = null;
+    },
+    toggle() { if (playing) player.pause(); else player.play(); },
+    setSpeed(x) {
+      if (!(x > 0)) return;
+      const pos = position();
+      rebase(pos);
+      rate = x;
+    },
+    setLoop(on) { looping = !!on; },
+    // Jump to ms into the recording. The newest packet of each type before that point is replayed first, so
+    // session, participants and the like are there even though they are only sent every few seconds.
+    seek(ms) {
+      const target = Math.max(0, Math.min(duration, ms));
+      let i = packets.findIndex(p => p.t > target);
+      if (i < 0) i = packets.length;
+      const seen = new Set(), keyframes = [];
+      for (let j = i - 1; j >= 0 && seen.size < 17; j--) {
+        const id = packets[j].buf[6];
+        if (!seen.has(id)) { seen.add(id); keyframes.push(packets[j].buf); }
+      }
+      keyframes.reverse().forEach(b => send(b));
+      next = i;
+      finished = false;
+      rebase(target);
+      if (playing) startClock();
+    },
+    skip(deltaMs) { player.seek(position() + deltaMs); },
+    restart() { player.seek(0); },
+    stop() { playing = false; clearInterval(timer); timer = null; },
+    status() {
+      return {playing, finished, speed: rate, loop: looping, pos: Math.round(position()), duration, packets: packets.length};
+    },
+    tick,
+  };
+  if (autoplay) player.play();
+  return player;
+}
+
+module.exports = {parseArgs, loadRecording, replay, createPlayer, SPEEDS, USAGE};
 
 if (require.main === module) {
   const args = parseArgs(process.argv.slice(2));
