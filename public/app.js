@@ -130,9 +130,10 @@ const mainDamage = createDamage($('dmg'));
 
 // --- Shared renderers for the dashboard and the driver modal ---
 // DRS badge (or overtake mode for 2026 cars), plus the active aero badge when there is one
-function renderBadges(drs, aero, t, t2) {
-  const badge = boostBadge(t, t2);
+function renderBadges(drs, aero, t, t2, status) {
+  const badge = boostBadge(t, t2, status);
   drs.textContent = badge.label;
+  drs.title = badge.wait ? `Overtake mode available in ${badge.wait} m` : '';
   drs.classList.toggle('on', badge.on);
   drs.classList.toggle('avail', badge.avail);
   if (!aero) return;
@@ -144,11 +145,11 @@ function renderBadges(drs, aero, t, t2) {
   }
 }
 
-function renderDriving(t, prefix, trail, t2) {
+function renderDriving(t, prefix, trail, t2, status) {
   idFor(prefix, 'speed').textContent = t.m_speed;
   idFor(prefix, 'gear').textContent = t.m_gear === 0 ? 'N' : t.m_gear < 0 ? 'R' : t.m_gear;
   idFor(prefix, 'rpm').textContent = t.m_engineRPM;
-  renderBadges(idFor(prefix, 'drs'), idFor(prefix, 'aero'), t, t2);
+  renderBadges(idFor(prefix, 'drs'), idFor(prefix, 'aero'), t, t2, status);
   idFor(prefix, 'thr').style.height = t.m_throttle * 100 + '%';
   idFor(prefix, 'brk').style.height = t.m_brake * 100 + '%';
   idFor(prefix, 'steer').style.left = 50 + t.m_steer * 45 + '%';
@@ -432,7 +433,7 @@ function renderDriver(s) {
   note.hidden = !restricted;
   if (restricted) note.textContent = 'This driver\'s telemetry is set to Restricted, so the game sends empty values for them.';
 
-  renderDriving(t, 'dm', dmSamples, d.telemetry2);
+  renderDriving(t, 'dm', dmSamples, d.telemetry2, d.status);
   if (d.status) renderStatus(d.status, 'dm', s.session && s.session.packetFormat);
   dmCar.update(t, d.damage);
   if (d.damage) dmDamage.update(d.damage);
@@ -676,7 +677,7 @@ function renderCompare(s) {
     f.ccspd.textContent = t.m_speed;
     f.ccgear.textContent = t.m_gear === 0 ? 'N' : t.m_gear < 0 ? 'R' : t.m_gear;
     f.ccrpm.textContent = t.m_engineRPM;
-    renderBadges(f.ccdrs, null, t, d.telemetry2);
+    renderBadges(f.ccdrs, null, t, d.telemetry2, d.status);
     f.ccthr.style.width = t.m_throttle * 100 + '%';
     f.ccthrv.textContent = Math.round(t.m_throttle * 100) + '%';
     f.ccbrk.style.width = t.m_brake * 100 + '%';
@@ -968,7 +969,7 @@ function render(s) {
 
   const t = s.telemetry;
   if (t) {
-    renderDriving(t, '', samples, s.telemetry2);
+    renderDriving(t, '', samples, s.telemetry2, s.status);
     const lit = Math.round(((t.m_revLightsPercent || 0) / 100) * 15);
     [...rev.children].forEach((el, i) => el.classList.toggle('on', i < lit));
   }

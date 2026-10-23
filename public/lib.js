@@ -172,18 +172,27 @@
     }
     return out;
   }
-  // DRS / overtake badge: 2026-regulation cars have overtake mode instead of DRS
-  function boostBadge(t, t2) {
+  // Is the car using overtake mode? In real F1 26 data the available/active flags are 1 for every car for the
+  // whole race (they only say the mode is enabled), so "using it" also needs the activation distance to have
+  // run out and the car to be deploying in Boost (ERS mode 3).
+  const overtakeOn = (t2, status) => !!(t2 && t2.m_2026Regulations && t2.m_overtakeActive && !t2.m_overtakeActivationDistance &&
+    status && status.m_ersDeployMode === 3);
+  // DRS / overtake badge: 2026-regulation cars have overtake mode instead of DRS. wait = metres until the mode
+  // becomes available (0 when it is, or there is no countdown).
+  function boostBadge(t, t2, status) {
     if (t2 && t2.m_2026Regulations) {
-      return {label: 'OVERTAKE', on: !!t2.m_overtakeActive, avail: !t2.m_overtakeActive && !!t2.m_overtakeAvailable};
+      const wait = t2.m_overtakeActivationDistance || 0;
+      const on = overtakeOn(t2, status);
+      return {label: 'OVERTAKE', on, avail: !on && !wait && !!(t2.m_overtakeAvailable || t2.m_overtakeActive), wait};
     }
-    return {label: 'DRS', on: !!(t && t.m_drs), avail: false};
+    return {label: 'DRS', on: !!(t && t.m_drs), avail: false, wait: 0};
   }
-  // active aero wing mode, or null when the car has none available
-  const aeroLabel = t2 => (t2 && t2.m_activeAeroAvailable ? (t2.m_activeAeroMode === 1 ? 'STRAIGHT' : 'CORNER') : null);
+  // active aero wing mode of a 2026 car. The game never sets m_activeAeroAvailable in practice, but the mode
+  // itself follows the car (straight on the straights), so it is shown whenever the car is a 2026 car.
+  const aeroLabel = t2 => (t2 && t2.m_2026Regulations ? (t2.m_activeAeroMode === 1 ? 'STRAIGHT' : 'CORNER') : null);
 
   return {
-    ersModeName, zoneRanges, boostBadge, aeroLabel,
+    ersModeName, zoneRanges, boostBadge, aeroLabel, overtakeOn,
     WEATHER, ERS_MODES, COMPOUNDS, TYRES, CAR_PARTS, DMG_KEYS, DMG_COLORS, TRACK_BUCKET_M,
     tempColor, wearColor, dmgLevel, cap, fmtTime, fmtSector, fmtGap, esc, fmtClock, gapOk, leaderGap,
     learnTrack, recordLapTrace, nearest, metricValue, fmtMetric, fmtDelta,

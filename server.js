@@ -6,6 +6,7 @@ const {WebSocketServer} = require('ws');
 const {F1TelemetryClient, constants} = require('./build/src');
 const {StrategyTracker} = require('./strategy');
 const {loadRecording, createPlayer} = require('./replay');
+const {overtakeOn} = require('./public/lib');
 
 const {PACKETS, TRACKS, TEAMS} = constants;
 const PUBLIC = path.join(__dirname, 'public');
@@ -116,7 +117,7 @@ function demoFrame(t) {
     },
     status: {
       m_fuelInTank: 60 - t / 4000, m_fuelCapacity: 110, m_visualTyreCompound: 17, m_actualTyreCompound: 17, m_tyresAgeLaps: lapNum,
-      m_ersStoreEnergy: 4000000 * (0.5 + 0.5 * Math.sin(a)), m_ersDeployMode: 2, m_maxRPM: 13000,
+      m_ersStoreEnergy: 4000000 * (0.5 + 0.5 * Math.sin(a)), m_ersDeployMode: corner < 0.2 ? 3 : 2, m_maxRPM: 13000,
       m_fuelRemainingLaps: 1.4 - lapNum * 0.3, m_ersHarvestedLimitPerLap: 8500000,
     },
     // 2026 regulations: straight-mode aero on the straights, overtake mode when close behind
@@ -218,7 +219,7 @@ function createDashboard(options = {}) {
         compound: status ? status.m_visualTyreCompound : 0,
         age: status ? status.m_tyresAgeLaps : 0,
         player: i === raw.playerIdx,
-        overtake: t2 ? t2.m_overtakeActive : 0,
+        overtake: overtakeOn(t2, status) ? 1 : 0,
         wrongWay: t2 ? t2.m_drivingWrongWay : 0,
         strategy: strategy.summary(i),
       });
