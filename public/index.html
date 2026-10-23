@@ -20,6 +20,7 @@
   </div>
   <div class="conn">
     <button id="rec" class="rec" title="Record raw game packets to a file" disabled><i></i><span id="recText">REC</span></button>
+    <button id="compareBtn" class="hbtn accent" title="Compare drivers side by side">⇄ Compare</button>
     <button id="resetLayout" class="hbtn" title="Reset section sizes">⟲ Layout</button>
     <span class="status"><span id="dot" class="dot"></span><span id="connText">Connecting…</span><span class="pps"><b id="pps">0</b> pkt/s</span></span>
   </div>
@@ -82,7 +83,7 @@
   <div class="split" data-dir="x" role="separator" aria-orientation="vertical" aria-label="Resize columns" tabindex="0"></div>
   <div class="col" id="c3">
   <section class="card standings" id="p-standings">
-    <h2><span>Standings</span><button id="gapMode" class="mode" title="Toggle gap type">INTERVAL</button></h2>
+    <h2><span>Standings</span><span class="hbtns"><button id="compareBtn2" class="mode" title="Compare drivers side by side">COMPARE</button><button id="gapMode" class="mode" title="Toggle gap type">INTERVAL</button></span></h2>
     <div class="shead"><span>P</span><span></span><span>DRIVER</span><span id="gapHead">GAP</span><button id="lapMode" class="lapmode" title="Toggle last / best lap">LAST</button><span>TYRE</span></div>
     <div id="rows" class="rows"><div class="empty">No rivals yet</div></div>
   </section>
@@ -95,6 +96,7 @@
       <span id="dmBar" class="dmbar"></span>
       <span class="dmpos">P<b id="dmPos">–</b></span>
       <div class="dmwho"><b id="dmName">–</b><small id="dmTeam"></small></div>
+      <button id="dmCompare" class="hbtn accent" title="Add this driver to the comparison">⇄ Compare</button>
       <button id="dmClose" class="dmclose" aria-label="Close">✕</button>
     </div>
     <div id="dmNote" class="dmnote" hidden></div>
@@ -131,6 +133,23 @@
       </div>
     </div>
   </div>
+</div>
+<div id="cmp" class="cmp" hidden>
+  <div class="cmpbar">
+    <div class="cmptitle"><span class="stripes"><i></i><i></i><i></i></span>COMPARE<small>up to 4 drivers</small></div>
+    <div class="cmppick" id="cmpPick"></div>
+    <button id="cmpClose" class="dmclose" aria-label="Close comparison">✕</button>
+  </div>
+  <div class="cmpchart">
+    <div class="cmpchead">
+      <span class="lbl">Live trace · last 20 s</span>
+      <div class="tabs" id="cmpMetric">
+        <button data-m="speed" class="on">SPEED</button><button data-m="thr">THROTTLE</button><button data-m="brk">BRAKE</button><button data-m="gear">GEAR</button>
+      </div>
+    </div>
+    <canvas id="cmpCanvas"></canvas>
+  </div>
+  <div class="cmpcols" id="cmpCols"><div class="cmpempty">Pick drivers above to compare their telemetry</div></div>
 </div>
 <div id="toast" class="toast" hidden></div>
 <div id="wait" class="wait" hidden>

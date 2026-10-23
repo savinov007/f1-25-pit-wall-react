@@ -79,6 +79,7 @@ function buildRivals() {
       telemetryPublic: part ? part.m_yourTelemetry === 1 : false,
       team: team ? team.name : '',
       color: team ? team.color : '#888888',
+      dist: l.m_lapDistance,
       x: mot ? mot.m_worldPositionX : undefined,
       z: mot ? mot.m_worldPositionZ : undefined,
       lapNum: l.m_currentLapNum,
@@ -175,9 +176,15 @@ const server = http.createServer((req, res) => {
 });
 const wss = new WebSocketServer({server});
 
+// Demo: rivals replay the player's recent telemetry with a per-car delay, so comparisons differ.
+const demoHistory = [];
+
 function buildDetail(idx) {
   if (DEMO) {
-    return {idx, telemetry: state.telemetry, status: state.status, damage: state.damage, lap: state.lap, motion: state.motion};
+    const h = demoHistory[Math.max(0, demoHistory.length - 1 - (idx % 12) * 6)] || state;
+    const wearShift = (idx % 5) * 4;
+    const damage = h.damage && {...h.damage, m_tyresWear: h.damage.m_tyresWear.map(w => Math.min(100, w + wearShift))};
+    return {idx, telemetry: h.telemetry, status: h.status, damage, lap: h.lap, motion: h.motion};
   }
   const pick = arr => (arr && arr[idx] ? {...arr[idx]} : null);
   const m = raw.mot && raw.mot[idx];
@@ -191,13 +198,20 @@ function buildDetail(idx) {
   };
 }
 
+const MAX_COMPARE = 4;
+const validIdx = v => Number.isInteger(v) && v >= 0 && v < 22;
+
 wss.on('connection', ws => {
   ws.selected = null;
+  ws.compare = [];
   ws.on('message', data => {
     try {
       const msg = JSON.parse(data);
       if ('select' in msg) {
         ws.selected = Number.isInteger(msg.select) && msg.select >= 0 && msg.select < 22 ? msg.select : null;
+      }
+      if ('compare' in msg) {
+        ws.compare = Array.isArray(msg.compare) ? [...new Set(msg.compare.filter(validIdx))].slice(0, MAX_COMPARE) : [];
       }
       if ('record' in msg) (msg.record ? startRecording : stopRecording)();
     } catch (err) {
@@ -214,7 +228,14 @@ function broadcast() {
   const shared = JSON.stringify(state);
   for (const ws of wss.clients) {
     if (ws.readyState !== 1) continue;
-    ws.send(ws.selected === null ? shared : JSON.stringify({...state, detail: buildDetail(ws.selected)}));
+    if (ws.selected === null && !ws.compare.length) {
+      ws.send(shared);
+      continue;
+    }
+    const extra = {};
+    if (ws.selected !== null) extra.detail = buildDetail(ws.selected);
+    if (ws.compare.length) extra.compare = ws.compare.map(buildDetail);
+    ws.send(JSON.stringify({...state, ...extra}));
   }
 }
 
@@ -330,6 +351,7 @@ function demoRivals(t, lapNum) {
     pit: i === 7 ? 1 : 0, stops: i % 3 === 0 ? 1 : 0, penalty: i === 5 ? 5 : 0, result: 2,
     compound: [16, 17, 18][i % 3], age: lapNum + (i % 4), player: c === you,
     ...demoPos(lapAngle + (2 - i) * 0.18),
+    dist: ((((lapAngle + (2 - i) * 0.18) / (Math.PI * 2)) % 1 + 1) % 1) * 5000,
   }));
 }
 
@@ -380,6 +402,8 @@ function startDemo() {
     state.motion = {x: Math.cos(a) * 400 + Math.cos(a * 2) * 60, z: Math.sin(a) * 250 + Math.sin(a * 3) * 40, gLat: Math.sin(a * 3) * 3, gLong: brake ? -3 : 1};
     state.pps = 20;
     state.rivals = demoRivals(t, lapNum);
+    demoHistory.push({telemetry: state.telemetry, status: state.status, damage: state.damage, lap: state.lap, motion: state.motion});
+    if (demoHistory.length > 120) demoHistory.shift();
   }, 50);
 }
 

@@ -24,7 +24,8 @@ const fmtTime = ms => {
   return `${m}:${s.toFixed(3).padStart(6, '0')}`;
 };
 const fmtSector = ms => (ms ? (ms / 1000).toFixed(3) : '–');
-const fmtGap = (ms, leader) => (leader ? 'LEADER' : ms ? '+' + (ms / 1000).toFixed(3) : '–');
+// the game sends huge deltas for cars still in the garage; anything over 10 minutes is meaningless
+const fmtGap = (ms, leader) => (leader ? 'LEADER' : ms && ms < 600000 ? '+' + (ms / 1000).toFixed(3) : '–');
 const esc = t => String(t).replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
 
 // Rev lights: 15 LEDs (green, red, blue)
@@ -217,8 +218,26 @@ function drawPedalTrace(cv, trail) {
 const samples = [];
 
 // --- Track map ---
+// The outline is built from every car on track, bucketed by lap distance, so it draws even while
+// you sit in the garage. Pit-lane and inactive cars are skipped so the outline stays on the circuit.
+const TRACK_BUCKET_M = 8;
 const map = $('map'), mctx = map.getContext('2d');
-let path = [], sessionUID = null, bounds = null, car = null;
+let track = new Map(), sessionUID = null, car = null;
+
+function learnTrack(rivals) {
+  for (const r of rivals || []) {
+    if (r.pit || r.result !== 2 || !(r.dist >= 0) || !(r.x || r.z)) continue;
+    const k = Math.floor(r.dist / TRACK_BUCKET_M);
+    // a car teleporting (garage -> grid, flashbacks) reports a position nowhere near its lap distance:
+    // ignore points that sit far from an already-known neighbouring bucket
+    const near = track.get(k - 1) || track.get(k + 1);
+    if (near && Math.hypot(near.x - r.x, near.z - r.z) > TRACK_BUCKET_M * 6) continue;
+    const p = track.get(k);
+    // light smoothing as several cars pass the same spot
+    track.set(k, p ? {x: p.x * 0.8 + r.x * 0.2, z: p.z * 0.8 + r.z * 0.2} : {x: r.x, z: r.z});
+  }
+}
+
 function drawMap() {
   const dpr = devicePixelRatio || 1;
   const w = map.clientWidth, h = map.clientHeight;
@@ -226,31 +245,43 @@ function drawMap() {
   if (map.width !== Math.round(w * dpr) || map.height !== Math.round(h * dpr)) { map.width = w * dpr; map.height = h * dpr; }
   mctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   mctx.clearRect(0, 0, w, h);
-  if (path.length < 2 || !bounds) {
+  const rivals = ((latest && latest.rivals) || []).filter(r => !r.player && (r.x || r.z));
+  const keys = [...track.keys()].sort((a, b) => a - b);
+  const pts = [...keys.map(k => track.get(k)), ...rivals, ...(car ? [car] : [])];
+  if (pts.length < 2) {
     mctx.fillStyle = '#7a8195'; mctx.textAlign = 'center';
     mctx.font = `600 12px ${DISPLAY_FONT}`;
-    mctx.fillText('DRIVE A LAP TO DRAW THE TRACK', w / 2, h / 2);
+    mctx.fillText('WAITING FOR CARS ON TRACK', w / 2, h / 2);
     return;
   }
-  const rivals = ((latest && latest.rivals) || []).filter(r => !r.player && (r.x || r.z));
-  // frame the traced lap plus every car, so rivals never sit off-canvas
-  const b = rivals.reduce(
-    (acc, r) => ({minX: Math.min(acc.minX, r.x), maxX: Math.max(acc.maxX, r.x), minZ: Math.min(acc.minZ, r.z), maxZ: Math.max(acc.maxZ, r.z)}),
-    bounds
+  const b = pts.reduce(
+    (acc, p) => ({minX: Math.min(acc.minX, p.x), maxX: Math.max(acc.maxX, p.x), minZ: Math.min(acc.minZ, p.z), maxZ: Math.max(acc.maxZ, p.z)}),
+    {minX: Infinity, maxX: -Infinity, minZ: Infinity, maxZ: -Infinity}
   );
   const pad = 22, spanX = b.maxX - b.minX || 1, spanZ = b.maxZ - b.minZ || 1;
   const scale = Math.min((w - pad * 2) / spanX, (h - pad * 2) / spanZ);
   const ox = (w - spanX * scale) / 2, oy = (h - spanZ * scale) / 2;
   const px = p => ox + (p.x - b.minX) * scale, py = p => oy + (p.z - b.minZ) * scale;
-  mctx.lineJoin = 'round'; mctx.lineCap = 'round';
-  mctx.beginPath(); path.forEach((p, i) => (i ? mctx.lineTo(px(p), py(p)) : mctx.moveTo(px(p), py(p))));
-  mctx.strokeStyle = '#1c2030'; mctx.lineWidth = 12; mctx.stroke();
-  mctx.strokeStyle = '#2b3042'; mctx.lineWidth = 8; mctx.stroke();
-  mctx.strokeStyle = 'rgba(225, 6, 0, .75)'; mctx.lineWidth = 1.5; mctx.stroke();
+
+  // outline: connect consecutive buckets, break the line across gaps not yet driven
+  if (keys.length > 1) {
+    mctx.lineJoin = 'round'; mctx.lineCap = 'round';
+    mctx.beginPath();
+    keys.forEach((k, i) => {
+      const p = track.get(k);
+      if (i && k - keys[i - 1] <= 4) mctx.lineTo(px(p), py(p)); else mctx.moveTo(px(p), py(p));
+    });
+    const first = track.get(keys[0]), last = track.get(keys[keys.length - 1]);
+    if (Math.hypot(first.x - last.x, first.z - last.z) < TRACK_BUCKET_M * 6) mctx.lineTo(px(first), py(first));
+    mctx.strokeStyle = '#1c2030'; mctx.lineWidth = 12; mctx.stroke();
+    mctx.strokeStyle = '#2b3042'; mctx.lineWidth = 8; mctx.stroke();
+    mctx.strokeStyle = 'rgba(225, 6, 0, .75)'; mctx.lineWidth = 1.5; mctx.stroke();
+  }
+
   mctx.font = `700 11px ${DISPLAY_FONT}`; mctx.textAlign = 'center';
   for (const r of rivals) {
     const x = px(r), y = py(r);
-    mctx.globalAlpha = r.result > 3 ? 0.35 : 1;
+    mctx.globalAlpha = r.result > 3 ? 0.35 : r.pit ? 0.6 : 1;
     mctx.beginPath(); mctx.arc(x, y, 5.5, 0, Math.PI * 2);
     mctx.fillStyle = r.color; mctx.fill();
     mctx.lineWidth = 2; mctx.strokeStyle = '#07080b'; mctx.stroke();
@@ -265,17 +296,6 @@ function drawMap() {
     mctx.fillStyle = '#fff'; mctx.shadowColor = '#fff'; mctx.shadowBlur = 14; mctx.fill(); mctx.shadowBlur = 0;
     mctx.lineWidth = 2.5; mctx.strokeStyle = '#e10600'; mctx.stroke();
   }
-}
-
-function addMapPoint(m) {
-  car = m;
-  const last = path[path.length - 1];
-  if (last && Math.hypot(m.x - last.x, m.z - last.z) < 4) return;
-  path.push({x: m.x, z: m.z});
-  if (path.length > 6000) path.shift();
-  bounds = bounds
-    ? {minX: Math.min(bounds.minX, m.x), maxX: Math.max(bounds.maxX, m.x), minZ: Math.min(bounds.minZ, m.z), maxZ: Math.max(bounds.maxZ, m.z)}
-    : {minX: m.x, maxX: m.x, minZ: m.z, maxZ: m.z};
 }
 
 let bestLap = 0, lastSeenLast = 0;
@@ -429,11 +449,283 @@ $('rec').onclick = () => {
   if (ws && ws.readyState === 1 && latest && latest.recording) ws.send(JSON.stringify({record: !latest.recording.active}));
 };
 
+// --- Compare mode: up to 4 drivers side by side, plus one overlaid trace chart ---
+const SLOT_COLORS = ['#ff2d1f', '#3aa0ff', '#ffb020', '#1fd166'];
+const CMP_SECONDS = 20;
+const cmp = $('cmp');
+let cmpSel = [];
+let cmpMetric = 'speed';
+let cmpPickHtml = '';
+const cmpTrails = new Map(); // car idx -> [{t, speed, thr, brk, gear}]
+let cmpCols = []; // per slot: {idx, el, refs}
+
+function sendCompare() {
+  if (ws && ws.readyState === 1) ws.send(JSON.stringify({compare: cmp.hidden ? [] : cmpSel}));
+}
+function openCompare(withIdx) {
+  if (!dm.hidden) closeDriver();
+  if (!cmpSel.length && latest && latest.rivals) {
+    // sensible default: you, plus the driver you opened it from or the car directly ahead (or the leader)
+    const me = latest.rivals.find(r => r.player);
+    const ahead = me && latest.rivals.find(r => r.pos === me.pos - 1);
+    const other = withIdx != null ? null : ahead || latest.rivals[0];
+    cmpSel = [me, other].filter(Boolean).map(r => r.idx).filter((v, i, a) => a.indexOf(v) === i);
+  }
+  if (withIdx != null && !cmpSel.includes(withIdx)) cmpSel = [...cmpSel.slice(0, 3), withIdx];
+  cmp.hidden = false;
+  cmpPickHtml = '';
+  buildCompareCols();
+  sendCompare();
+  if (latest) renderCompare(latest);
+}
+function closeCompare() {
+  cmp.hidden = true;
+  sendCompare();
+}
+function toggleCompare(idx) {
+  if (cmpSel.includes(idx)) cmpSel = cmpSel.filter(i => i !== idx);
+  else if (cmpSel.length < 4) cmpSel = [...cmpSel, idx];
+  cmpPickHtml = '';
+  buildCompareCols();
+  sendCompare();
+  if (latest) renderCompare(latest);
+}
+$('compareBtn').onclick = () => openCompare();
+$('compareBtn2').onclick = () => openCompare();
+$('dmCompare').onclick = () => openCompare(selected);
+$('cmpClose').onclick = closeCompare;
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && !cmp.hidden) closeCompare(); });
+$('cmpPick').addEventListener('pointerdown', e => {
+  const chip = e.target.closest('.pchip');
+  if (chip && !chip.disabled) toggleCompare(Number(chip.dataset.idx));
+});
+$('cmpCols').addEventListener('click', e => {
+  const x = e.target.closest('.ccx');
+  if (x) toggleCompare(Number(x.dataset.idx));
+});
+$('cmpMetric').addEventListener('click', e => {
+  const b = e.target.closest('button');
+  if (!b) return;
+  cmpMetric = b.dataset.m;
+  for (const btn of $('cmpMetric').children) btn.classList.toggle('on', btn === b);
+});
+
+function renderPicker(s) {
+  const rivals = s.rivals || [];
+  const html = rivals.map(r => {
+    const slot = cmpSel.indexOf(r.idx);
+    const full = slot < 0 && cmpSel.length >= 4;
+    return `<button class="pchip${slot >= 0 ? ' on' : ''}" data-idx="${r.idx}" ${full ? 'disabled' : ''}
+      style="--team:${esc(r.color)};${slot >= 0 ? `--slot:${SLOT_COLORS[slot]}` : ''}"><i></i><b>${r.pos}</b>${esc(r.name.slice(0, 14))}${r.player ? ' <em>YOU</em>' : ''}</button>`;
+  }).join('');
+  if (html !== cmpPickHtml) { $('cmpPick').innerHTML = html || '<span class="lbl">No drivers yet</span>'; cmpPickHtml = html; }
+}
+
+function buildCompareCols() {
+  const box = $('cmpCols');
+  box.style.setProperty('--n', Math.max(1, cmpSel.length));
+  if (!cmpSel.length) {
+    box.innerHTML = '<div class="cmpempty">Pick drivers above to compare their telemetry</div>';
+    cmpCols = [];
+    return;
+  }
+  box.innerHTML = '';
+  cmpCols = cmpSel.map((idx, k) => {
+    const el = document.createElement('div');
+    el.className = 'cc';
+    el.style.setProperty('--slot', SLOT_COLORS[k]);
+    el.innerHTML = `
+      <div class="cchead"><i class="ccslot"></i><span class="ccteam"></span>
+        <span class="ccpos">P<b>–</b></span><div class="ccwho"><b class="ccname">–</b><small class="ccsub"></small></div>
+        <button class="ccx" data-idx="${idx}" title="Remove from comparison">✕</button></div>
+      <div class="ccnote" hidden></div>
+      <div class="ccspeed">
+        <div><div class="lbl">GEAR</div><b class="ccgear">N</b></div>
+        <div class="big"><b class="ccspd">0</b><div class="lbl">KM/H</div></div>
+        <div><div class="lbl">RPM</div><b class="ccrpm">0</b><div class="drs ccdrs">DRS</div></div>
+      </div>
+      <div class="ccpedals">
+        <div class="hb"><span>THR</span><div class="hbar"><i class="ccthr thr"></i></div><b class="ccthrv">0%</b></div>
+        <div class="hb"><span>BRK</span><div class="hbar"><i class="ccbrk brk"></i></div><b class="ccbrkv">0%</b></div>
+      </div>
+      <dl class="ccstats">
+        <div><dt>GAP TO LEADER</dt><dd class="ccgap">–</dd></div>
+        <div><dt class="ccvsl">VS –</dt><dd class="ccvs">–</dd></div>
+        <div><dt>CURRENT</dt><dd class="cccur">–</dd></div>
+        <div><dt>LAST LAP</dt><dd class="cclast">–</dd></div>
+        <div><dt>BEST LAP</dt><dd class="ccbest">–</dd></div>
+        <div><dt>LAP · STOPS</dt><dd class="cclap">–</dd></div>
+      </dl>
+      <div class="cctyres">
+        <div class="cctyrehead"><span class="lbl">TYRES</span><span class="compound"><span class="cdot cccdot"></span><b class="cccname">–</b><small class="cccage"></small></span></div>
+        <div class="ccwear">${TYRES.map(ty => `<div><span>${ty.n}</span><b>–</b><small>–</small></div>`).join('')}</div>
+      </div>
+      <div class="ccmeters">
+        <div class="meter"><div class="mhead"><span>FUEL</span><b class="ccfuel">–</b><small class="ccfuell"></small></div><div class="seg"><i class="fuel ccfuelb"></i></div></div>
+        <div class="meter"><div class="mhead"><span>ERS</span><b class="ccers">–</b><small class="ccersm"></small></div><div class="seg"><i class="ers ccersb"></i></div></div>
+      </div>
+      <div class="ccdmg"></div>`;
+    box.appendChild(el);
+    const q = c => el.querySelector('.' + c);
+    const refs = {};
+    for (const c of ['ccpos', 'ccname', 'ccsub', 'ccteam', 'ccnote', 'ccgear', 'ccspd', 'ccrpm', 'ccdrs', 'ccthr', 'ccthrv', 'ccbrk', 'ccbrkv',
+      'ccgap', 'ccvsl', 'ccvs', 'cccur', 'cclast', 'ccbest', 'cclap', 'cccdot', 'cccname', 'cccage', 'ccfuel', 'ccfuell', 'ccfuelb',
+      'ccers', 'ccersm', 'ccersb', 'ccdmg']) refs[c] = q(c);
+    refs.wear = [...el.querySelectorAll('.ccwear > div')];
+    return {idx, el, refs};
+  });
+}
+
+const gapOk = ms => ms >= 0 && ms < 600000;
+// gap to the leader in ms, or null when unknown (the game reports 0 for cars without timing yet)
+const leaderGap = r => (r.pos === 1 ? 0 : r.gapLeader > 0 && r.gapLeader < 600000 ? r.gapLeader : null);
+function renderCompare(s) {
+  if (cmp.hidden) return;
+  renderPicker(s);
+  const rivals = s.rivals || [];
+  const byIdx = new Map(rivals.map(r => [r.idx, r]));
+  const details = new Map((s.compare || []).map(d => [d.idx, d]));
+  const now = performance.now();
+
+  // trails for the chart
+  for (const d of details.values()) {
+    if (!d.telemetry) continue;
+    const trail = cmpTrails.get(d.idx) || [];
+    const t = d.telemetry;
+    trail.push({t: now, speed: t.m_speed, thr: t.m_throttle, brk: t.m_brake, gear: t.m_gear});
+    while (trail.length && now - trail[0].t > CMP_SECONDS * 1000) trail.shift();
+    cmpTrails.set(d.idx, trail);
+  }
+
+  // best values across the compared drivers get highlighted
+  const sel = cmpCols.map(c => byIdx.get(c.idx)).filter(Boolean);
+  const minOf = vals => { const v = vals.filter(x => x > 0); return v.length > 1 ? Math.min(...v) : 0; };
+  const bestLast = minOf(sel.map(r => r.last)), bestBest = minOf(sel.map(r => r.best));
+  const ref = byIdx.get(cmpCols[0] && cmpCols[0].idx);
+
+  cmpCols.forEach((col, k) => {
+    const r = byIdx.get(col.idx), d = details.get(col.idx), f = col.refs;
+    if (r) {
+      f.ccpos.querySelector('b').textContent = r.pos;
+      f.ccname.textContent = r.name;
+      f.ccsub.textContent = `#${r.num}${r.team ? ' · ' + r.team : ''}${r.pit ? ' · IN PIT' : ''}`;
+      f.ccteam.style.background = r.color;
+      f.ccgap.textContent = r.pos === 1 ? 'LEADER' : gapOk(r.gapLeader) && r.gapLeader ? '+' + (r.gapLeader / 1000).toFixed(3) : '–';
+      if (k === 0 || !ref) { f.ccvsl.textContent = 'REFERENCE'; f.ccvs.textContent = '—'; f.ccvs.className = 'ccvs'; }
+      else {
+        f.ccvsl.textContent = 'VS ' + ref.name.slice(0, 10).toUpperCase();
+        const a = leaderGap(r), b = leaderGap(ref);
+        const delta = a == null || b == null ? null : a - b;
+        f.ccvs.textContent = delta == null ? '–' : (delta >= 0 ? '+' : '−') + Math.abs(delta / 1000).toFixed(3);
+        f.ccvs.className = 'ccvs ' + (delta == null ? '' : delta > 0 ? 'behind' : 'ahead');
+      }
+      f.cclast.textContent = fmtTime(r.last);
+      f.cclast.classList.toggle('purple', !!bestLast && r.last === bestLast);
+      f.ccbest.textContent = fmtTime(r.best);
+      f.ccbest.classList.toggle('purple', !!bestBest && r.best === bestBest);
+      f.cclap.textContent = `${r.lapNum || '–'} · ${r.stops}`;
+    }
+    if (!d || !d.telemetry) { f.ccnote.hidden = false; f.ccnote.textContent = 'Waiting for this car\'s data…'; return; }
+    const t = d.telemetry;
+    const restricted = r && !r.telemetryPublic && !r.player && !t.m_speed && !t.m_engineRPM;
+    f.ccnote.hidden = !restricted;
+    if (restricted) f.ccnote.textContent = 'Telemetry restricted by this player — the game sends empty values.';
+    f.ccspd.textContent = t.m_speed;
+    f.ccgear.textContent = t.m_gear === 0 ? 'N' : t.m_gear < 0 ? 'R' : t.m_gear;
+    f.ccrpm.textContent = t.m_engineRPM;
+    f.ccdrs.classList.toggle('on', !!t.m_drs);
+    f.ccthr.style.width = t.m_throttle * 100 + '%';
+    f.ccthrv.textContent = Math.round(t.m_throttle * 100) + '%';
+    f.ccbrk.style.width = t.m_brake * 100 + '%';
+    f.ccbrkv.textContent = Math.round(t.m_brake * 100) + '%';
+    if (d.lap) f.cccur.textContent = fmtTime(d.lap.m_currentLapTimeInMS);
+    const st = d.status;
+    if (st) {
+      const [name, color] = COMPOUNDS[st.m_visualTyreCompound] || ['–', '#888'];
+      f.cccname.textContent = name;
+      f.cccdot.style.borderColor = color;
+      f.cccage.textContent = st.m_tyresAgeLaps + (st.m_tyresAgeLaps === 1 ? ' lap' : ' laps');
+      const fuelPct = st.m_fuelCapacity ? (st.m_fuelInTank / st.m_fuelCapacity) * 100 : 0;
+      f.ccfuelb.style.width = Math.max(0, Math.min(100, fuelPct)) + '%';
+      f.ccfuel.textContent = st.m_fuelInTank.toFixed(1) + ' KG';
+      const laps = st.m_fuelRemainingLaps;
+      f.ccfuell.textContent = laps == null ? '' : `${laps >= 0 ? '+' : ''}${laps.toFixed(2)} laps`;
+      const ersPct = (st.m_ersStoreEnergy / ERS_MAX) * 100;
+      f.ccersb.style.width = Math.max(0, Math.min(100, ersPct)) + '%';
+      f.ccers.textContent = Math.round(ersPct) + '%';
+      f.ccersm.textContent = ERS_MODES[st.m_ersDeployMode] || '';
+    }
+    TYRES.forEach((ty, j) => {
+      const cell = f.wear[j];
+      const w = d.damage && d.damage.m_tyresWear ? Math.max(0, Math.min(100, d.damage.m_tyresWear[ty.i])) : null;
+      const b = cell.querySelector('b');
+      b.textContent = w == null ? '–' : Math.round(w) + '%';
+      b.style.color = w == null ? '' : wearColor(w);
+      const temp = t.m_tyresSurfaceTemperature[ty.i];
+      const small = cell.querySelector('small');
+      small.textContent = Math.round(temp) + '°';
+      small.style.color = tempColor(temp);
+      cell.style.borderColor = w == null ? '' : wearColor(w);
+    });
+    if (d.damage) {
+      const hurt = DMG_KEYS.map(([key, label]) => [label, Math.round(d.damage[key] || 0)]).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
+      const html = hurt.length
+        ? hurt.map(([label, v]) => `<span class="l${dmgLevel(v)}">${label} <b>${v}%</b></span>`).join('')
+        : '<span class="ok">NO DAMAGE</span>';
+      if (f.ccdmg.innerHTML !== html) f.ccdmg.innerHTML = html;
+    }
+  });
+}
+
+function drawCompareChart() {
+  const cv = $('cmpCanvas');
+  const w = cv.clientWidth, h = cv.clientHeight;
+  if (!w || !h) return;
+  const ctx = cv.getContext('2d'), dpr = devicePixelRatio || 1;
+  if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) { cv.width = w * dpr; cv.height = h * dpr; }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  const span = CMP_SECONDS * 1000, now = performance.now();
+  const trails = cmpCols.map(c => cmpTrails.get(c.idx) || []);
+  let max = cmpMetric === 'speed' ? 350 : cmpMetric === 'gear' ? 8 : 1;
+  if (cmpMetric === 'speed') for (const tr of trails) for (const p of tr) max = Math.max(max, p.speed);
+  const padL = 44, padT = 8, padB = 18, plotW = w - padL - 8, plotH = h - padT - padB;
+  const yOf = v => padT + plotH - (v / max) * plotH;
+  // grid + labels
+  ctx.font = `600 10px ${DISPLAY_FONT}`; ctx.fillStyle = '#7a8195'; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+  ctx.strokeStyle = '#171a24'; ctx.lineWidth = 1;
+  const ticks = cmpMetric === 'gear' ? [0, 2, 4, 6, 8] : [0, .25, .5, .75, 1].map(f => f * max);
+  for (const v of ticks) {
+    const y = Math.round(yOf(v)) + .5;
+    ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(w - 8, y); ctx.stroke();
+    const label = cmpMetric === 'speed' ? Math.round(v) : cmpMetric === 'gear' ? v : Math.round(v * 100) + '%';
+    ctx.fillText(label, padL - 8, y);
+  }
+  ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
+  for (let sec = 0; sec <= CMP_SECONDS; sec += 5) {
+    ctx.fillText(sec ? `-${sec}s` : 'now', padL + plotW - (sec / CMP_SECONDS) * plotW, h - 4);
+  }
+  trails.forEach((tr, k) => {
+    if (tr.length < 2) return;
+    ctx.beginPath();
+    tr.forEach((p, i) => {
+      const x = padL + plotW - ((now - p.t) / span) * plotW;
+      const v = cmpMetric === 'gear' ? Math.max(0, p.gear) : p[cmpMetric];
+      const y = yOf(v);
+      i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+    });
+    ctx.strokeStyle = SLOT_COLORS[k]; ctx.lineWidth = 2; ctx.lineJoin = 'round';
+    ctx.shadowColor = SLOT_COLORS[k]; ctx.shadowBlur = 6; ctx.stroke(); ctx.shadowBlur = 0;
+  });
+}
+
 // --- Main render ---
 function render(s) {
   renderRecording(s);
   renderRivals(s);
+  learnTrack(s.rivals);
   renderDriver(s);
+  renderCompare(s);
   $('dot').className = 'dot ' + (s.connected ? 'live' : 'idle');
   $('connText').textContent = s.connected ? 'LIVE' : s.hasData ? 'NO SIGNAL — PAUSED?' : 'WAITING FOR GAME';
   $('pps').textContent = s.pps;
@@ -441,7 +733,7 @@ function render(s) {
 
   if (s.session) {
     const se = s.session;
-    if (se.sessionUID !== sessionUID) { sessionUID = se.sessionUID; path = []; bounds = null; car = null; bestLap = 0; }
+    if (se.sessionUID !== sessionUID) { sessionUID = se.sessionUID; track = new Map(); car = null; bestLap = 0; }
     $('track').textContent = se.track;
     $('weather').textContent = WEATHER[se.weather] || '—';
     $('trackTemp').textContent = se.trackTemp;
@@ -480,7 +772,7 @@ function render(s) {
   }
 
   if (s.motion) {
-    addMapPoint(s.motion);
+    car = s.motion;
     $('gLat').textContent = s.motion.gLat.toFixed(1);
     $('gLong').textContent = s.motion.gLong.toFixed(1);
   }
@@ -490,6 +782,7 @@ function frame() {
   drawPedalTrace($('trace'), samples);
   drawMap();
   if (!dm.hidden) drawPedalTrace($('dmTrace'), dmSamples);
+  if (!cmp.hidden) drawCompareChart();
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
@@ -497,7 +790,7 @@ requestAnimationFrame(frame);
 let latest = null;
 function connect() {
   ws = new WebSocket(`ws://${location.host}`);
-  ws.onopen = sendSelect;
+  ws.onopen = () => { sendSelect(); sendCompare(); };
   ws.onmessage = e => { latest = JSON.parse(e.data); render(latest); };
   ws.onclose = () => {
     $('dot').className = 'dot';
