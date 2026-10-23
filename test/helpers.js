@@ -88,7 +88,7 @@ function loadPage({storage = {}, width = 1600, height = 900, desktop = true} = {
   w.WebSocket = FakeWebSocket;
 
   // classic <script> elements, as in the browser: top-level let/const share one global scope
-  for (const script of ['lib.js', 'app.js', 'layout.js', 'popup.js']) {
+  for (const script of ['lib.js', 'app.js', 'layout.js', 'popup.js', 'replaybar.js']) {
     const el = w.document.createElement('script');
     el.textContent = fs.readFileSync(path.join(PUBLIC, script), 'utf8');
     w.document.body.appendChild(el);

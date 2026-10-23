@@ -582,3 +582,136 @@ describe('F1 26 (UDP format 2026)', () => {
     p.close();
   });
 });
+
+describe('replay mode', () => {
+  const replay = o => ({file: 'race.jsonl', playing: true, finished: false, speed: 1, loop: false, pos: 65000, duration: 600000, packets: 9000, ...o});
+  const sentReplay = p => p.socket().sent.filter(m => m.replay).map(m => m.replay);
+
+  test('live and demo show no replay UI', async () => {
+    const p = await boot();
+    p.push(dashboardState());
+    assert.equal(p.$('replayChip').hidden, true);
+    assert.equal(p.$('rp').hidden, true);
+    assert.equal(p.doc.body.classList.contains('replaying'), false);
+    assert.equal(p.$('connText').textContent, 'LIVE');
+  });
+
+  test('header badge makes the replay obvious, with speed and position', async () => {
+    const p = await boot();
+    p.push(dashboardState({replay: replay({speed: 2})}));
+    assert.equal(p.$('replayChip').hidden, false);
+    assert.match(p.$('replayChip').textContent, /REPLAY/);
+    assert.equal(p.$('replayInfo').textContent, '2× · 1:05 / 10:00');
+    assert.equal(p.doc.body.classList.contains('replaying'), true);
+    assert.equal(p.$('connText').textContent, 'REPLAY');
+    p.push(dashboardState({replay: replay({playing: false})}));
+    assert.equal(p.$('replayInfo').textContent, 'PAUSED · 1:05 / 10:00');
+    assert.equal(p.$('replayChip').classList.contains('paused'), true);
+    p.push(dashboardState({replay: replay({playing: false, finished: true, pos: 600000})}));
+    assert.equal(p.$('replayInfo').textContent, 'ENDED · 10:00 / 10:00');
+    assert.equal(p.$('connText').textContent, 'REPLAY ENDED');
+    p.push(dashboardState());
+    assert.equal(p.$('replayChip').hidden, true, 'badge goes away when not replaying');
+  });
+
+  test('the waiting screen never covers a replay', async () => {
+    const p = await boot();
+    p.push(dashboardState({hasData: false, setup: {ips: [], udpPort: 20777}, replay: replay()}));
+    assert.equal(p.$('wait').hidden, true);
+  });
+
+  test('floating popup shows the file, position, play state, loop and speed', async () => {
+    const p = await boot();
+    p.push(dashboardState({replay: replay({speed: 3, loop: true})}));
+    assert.equal(p.$('rp').hidden, false);
+    assert.equal(p.$('rpFile').textContent, 'race.jsonl');
+    assert.equal(p.$('rpPos').textContent, '1:05');
+    assert.equal(p.$('rpDur').textContent, '10:00');
+    assert.equal(p.$('rpSeek').value, '108');
+    assert.equal(p.$('rpPlay').textContent, '⏸');
+    assert.equal(p.$('rpLoop').classList.contains('on'), true);
+    const on = [...p.doc.querySelectorAll('#rpSpeeds button.on')].map(b => b.textContent);
+    assert.deepEqual(on, ['3×']);
+    assert.equal(p.doc.querySelectorAll('#rpSpeeds button').length, 7);
+    p.push(dashboardState({replay: replay({playing: false, duration: 0, pos: 0})}));
+    assert.equal(p.$('rpPlay').textContent, '▶');
+    assert.equal(p.$('rpSeek').value, '0', 'empty recording does not divide by zero');
+  });
+
+  test('buttons send player commands', async () => {
+    const p = await boot();
+    p.push(dashboardState({replay: replay()}));
+    p.$('rpPlay').click();
+    p.$('rpRestart').click();
+    p.$('rpBack').click();
+    p.$('rpFwd').click();
+    p.$('rpLoop').click();
+    p.doc.querySelector('#rpSpeeds [data-speed="5"]').click();
+    p.doc.querySelector('#rpSpeeds').click(); // between buttons: nothing
+    assert.deepEqual(sentReplay(p), [
+      {action: 'toggle'}, {action: 'restart'}, {action: 'skip', value: -10000}, {action: 'skip', value: 10000},
+      {action: 'loop', value: true}, {action: 'speed', value: 5},
+    ]);
+    p.push(dashboardState({replay: replay({loop: true})}));
+    p.$('rpLoop').click();
+    assert.deepEqual(sentReplay(p).at(-1), {action: 'loop', value: false}, 'toggles loop off');
+  });
+
+  test('scrubbing seeks on release and does not fight the live position', async () => {
+    const p = await boot();
+    p.push(dashboardState({replay: replay()}));
+    const seek = p.$('rpSeek');
+    seek.value = '500';
+    seek.dispatchEvent(new p.w.Event('input'));
+    assert.equal(p.$('rpPos').textContent, '5:00', 'time follows the thumb');
+    p.push(dashboardState({replay: replay({pos: 70000})}));
+    assert.equal(seek.value, '500', 'server updates are held while scrubbing');
+    seek.dispatchEvent(new p.w.Event('change'));
+    assert.deepEqual(sentReplay(p), [{action: 'seek', value: 300000}]);
+    p.push(dashboardState({replay: replay({pos: 300000})}));
+    assert.equal(seek.value, '500');
+    p.push(dashboardState({replay: replay({pos: 150000})}));
+    assert.equal(seek.value, '250', 'following the server again');
+  });
+
+  test('controls do nothing without a connection or replay state', async () => {
+    const p = await boot();
+    p.socket().readyState = 3;
+    p.$('rpPlay').click();
+    assert.deepEqual(sentReplay(p), []);
+    const seek = p.$('rpSeek');
+    seek.dispatchEvent(new p.w.Event('input'));
+    seek.dispatchEvent(new p.w.Event('change'));
+    assert.deepEqual(sentReplay(p), []);
+  });
+
+  test('collapse button hides the controls, and dragging moves and remembers the popup', async () => {
+    const p = await boot();
+    p.push(dashboardState({replay: replay()}));
+    p.$('rpMin').click();
+    assert.equal(p.$('rp').classList.contains('collapsed'), true);
+    p.$('rpMin').click();
+    assert.equal(p.$('rp').classList.contains('collapsed'), false);
+    const box = p.$('rp');
+    box.getBoundingClientRect = () => ({left: 600, top: 500, width: 340, height: 200});
+    Object.defineProperty(box, 'offsetWidth', {value: 340});
+    Object.defineProperty(box, 'offsetHeight', {value: 200});
+    const head = p.$('rpHead');
+    const fire = (type, x, y, target = head) => target.dispatchEvent(new p.w.MouseEvent(type, {clientX: x, clientY: y, bubbles: true}));
+    fire('pointerdown', 700, 510, p.$('rpMin')); // on a button: no drag
+    assert.equal(box.classList.contains('placed'), false);
+    fire('pointerdown', 700, 510);
+    fire('pointermove', 600, 410);
+    assert.equal(box.style.left, '500px');
+    assert.equal(box.style.top, '400px');
+    fire('pointermove', -5000, 9000);
+    assert.equal(box.style.left, '6px', 'kept on screen');
+    assert.equal(box.style.top, `${900 - 200 - 6}px`);
+    fire('pointerup', 0, 0);
+    assert.deepEqual(JSON.parse(p.w.localStorage.getItem('pitwall-replay-pos')), {x: 6, y: 694});
+    const q = await boot({storage: {'pitwall-replay-pos': '{"x":120,"y":80}'}});
+    assert.equal(q.$('rp').style.left, '120px', 'position restored');
+    const bad = await boot({storage: {'pitwall-replay-pos': 'nope'}});
+    assert.equal(bad.$('rp').classList.contains('placed'), false);
+  });
+});

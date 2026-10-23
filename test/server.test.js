@@ -255,6 +255,83 @@ describe('UDP format 2026 (F1 26)', () => {
   });
 });
 
+describe('replay mode', () => {
+  const {FIXTURE} = require('./helpers');
+  const replaying = async () => {
+    const d = offline({replayFile: FIXTURE});
+    await d.start();
+    return d;
+  };
+
+  test('plays the recording through the live pipeline and reports player state', async () => {
+    const d = await replaying();
+    const first = d.refreshState();
+    assert.equal(first.replay.file, 'catalunya-f125.jsonl');
+    assert.equal(first.replay.playing, true);
+    assert.equal(first.connected, true);
+    d.getPlayer().seek(d.getPlayer().status().duration);
+    const s = d.refreshState();
+    assert.equal(s.session.track, 'Catalunya');
+    assert.equal(s.hasData, true);
+    assert.equal(s.rivals.length, 10);
+    assert.equal(s.recording.available, false, 'no recording while replaying');
+  });
+
+  test('stays connected while paused, and live mode has no replay state', async () => {
+    const d = await replaying();
+    d.controlReplay({action: 'pause'});
+    assert.equal(d.refreshState().replay.playing, false);
+    assert.equal(d.refreshState().connected, true);
+    assert.equal(offline().refreshState().replay, null);
+  });
+
+  test('clients control the player', async () => {
+    const d = await replaying();
+    const p = d.getPlayer();
+    const client = {selected: null, compare: []};
+    const send = (action, value) => d.handleClientMessage(client, JSON.stringify({replay: {action, value}}));
+    send('pause');
+    assert.equal(p.status().playing, false);
+    send('play');
+    assert.equal(p.status().playing, true);
+    send('toggle');
+    assert.equal(p.status().playing, false);
+    send('speed', 3);
+    assert.equal(p.status().speed, 3);
+    send('speed', 'fast');
+    send('speed', -1);
+    assert.equal(p.status().speed, 3, 'bad speeds ignored');
+    send('seek', 1000);
+    assert.equal(p.status().pos, 1000);
+    send('skip', 500);
+    assert.equal(p.status().pos, 1500);
+    send('skip', 'x');
+    send('seek', 'x');
+    assert.equal(p.status().pos, 1500, 'bad positions ignored');
+    send('loop', true);
+    assert.equal(p.status().loop, true);
+    send('restart');
+    assert.equal(p.status().pos, 0);
+    send('bogus');
+    d.handleClientMessage({selected: null, compare: []}, JSON.stringify({replay: {action: 'pause'}}));
+  });
+
+  test('replay messages are ignored when not replaying', () => {
+    const d = offline();
+    d.handleClientMessage({selected: null, compare: []}, JSON.stringify({replay: {action: 'pause'}}));
+    assert.equal(d.getPlayer(), null);
+  });
+
+  test('command line: --replay needs a file, and rejects a bad one', () => {
+    const run = args => require('child_process').spawnSync(process.execPath, [path.join(ROOT, 'server.js'), ...args], {encoding: 'utf8', env: {...process.env, PORT: '0', UDP_PORT: '0'}});
+    assert.match(run(['--replay']).stderr, /Usage: node server.js --replay/);
+    assert.equal(run(['--replay']).status, 1);
+    const bad = run(['--replay', path.join(ROOT, 'package.json')]);
+    assert.equal(bad.status, 1);
+    assert.match(bad.stderr, /Not a recording file/);
+  });
+});
+
 describe('recording', () => {
   test('records raw packets and replay.js reads them back', async () => {
     const dir = tmpDir();
