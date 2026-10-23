@@ -1,32 +1,17 @@
 const $ = id => document.getElementById(id);
-const WEATHER = ['Clear', 'Light cloud', 'Overcast', 'Light rain', 'Heavy rain', 'Storm'];
-const ERS_MODES = ['None', 'Medium', 'Hotlap', 'Overtake'];
-const COMPOUNDS = {
-  16: ['Soft', '#f92d29'], 17: ['Medium', '#ebd25f'], 18: ['Hard', '#ffffff'],
-  7: ['Intermediate', '#3ac82b'], 8: ['Wet', '#4491d2'],
-};
+const {
+  WEATHER, ERS_MODES, COMPOUNDS, TYRES, CAR_PARTS, DMG_KEYS, DMG_COLORS, TRACK_BUCKET_M,
+  tempColor, wearColor, dmgLevel, cap, fmtTime, fmtSector, fmtGap, esc, fmtClock, gapOk, leaderGap,
+  learnTrack, recordLapTrace, nearest, metricValue, fmtMetric, fmtDelta,
+  tyreProjection, fmtLaps, lapsColor, fmtS, fmtRate, nameOf, rejoinEstimate, battleTrend,
+} = PitLib;
 const ERS_MAX = 4000000;
 const TRACE_SECONDS = 10;
 const DISPLAY_FONT = '"Saira Condensed", "Arial Narrow", sans-serif';
 
-// Colour scales. Temperature bands are approximate working windows for the game's surface temps.
-const tempColor = t => (t < 80 ? '#3aa0ff' : t < 105 ? '#1fd166' : t < 115 ? '#ffb020' : '#ff2d1f');
-const wearColor = w => (w < 25 ? '#1fd166' : w < 45 ? '#e6d84a' : w < 65 ? '#ffb020' : '#ff2d1f');
-const dmgLevel = v => (v <= 0 ? 0 : v < 20 ? 1 : v < 50 ? 2 : 3);
-const DMG_COLORS = ['', 'rgba(255, 176, 32, .45)', 'rgba(255, 122, 26, .85)', '#ff2d1f'];
-const cap = s => s[0].toUpperCase() + s.slice(1);
 // Element ids for the main dashboard ('fuel') and the driver modal ('dmFuel')
 const idFor = (prefix, name) => $(prefix ? prefix + cap(name) : name);
 
-const fmtTime = ms => {
-  if (!ms) return '–';
-  const m = Math.floor(ms / 60000), s = (ms % 60000) / 1000;
-  return `${m}:${s.toFixed(3).padStart(6, '0')}`;
-};
-const fmtSector = ms => (ms ? (ms / 1000).toFixed(3) : '–');
-// the game sends huge deltas for cars still in the garage; anything over 10 minutes is meaningless
-const fmtGap = (ms, leader) => (leader ? 'LEADER' : ms && ms < 600000 ? '+' + (ms / 1000).toFixed(3) : '–');
-const esc = t => String(t).replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
 
 // Rev lights: 15 LEDs (green, red, blue)
 const rev = $('rev');
@@ -37,17 +22,6 @@ for (let i = 0; i < 15; i++) {
 }
 
 // --- Car diagram: top-down chassis, tyres coloured by temperature, tread drains with wear ---
-// Visual order FL FR RL RR; the game's arrays are RL RR FL FR.
-const TYRES = [
-  {n: 'FL', i: 2, area: 'fl', side: 'l', x: 5, y: 26, w: 19, h: 42},
-  {n: 'FR', i: 3, area: 'fr', side: 'r', x: 76, y: 26, w: 19, h: 42},
-  {n: 'RL', i: 0, area: 'rl', side: 'l', x: 2, y: 128, w: 23, h: 46},
-  {n: 'RR', i: 1, area: 'rr', side: 'r', x: 75, y: 128, w: 23, h: 46},
-];
-const CAR_PARTS = [
-  ['fwl', 'm_frontLeftWingDamage'], ['fwr', 'm_frontRightWingDamage'], ['rw', 'm_rearWingDamage'],
-  ['floor', 'm_floorDamage'], ['dif', 'm_diffuserDamage'], ['spl', 'm_sidepodDamage'], ['spr', 'm_sidepodDamage'],
-];
 let carSeq = 0;
 
 function createCar(box) {
@@ -134,11 +108,6 @@ function createCar(box) {
 }
 
 // --- Damage tiles ---
-const DMG_KEYS = [
-  ['m_frontLeftWingDamage', 'FL wing'], ['m_frontRightWingDamage', 'FR wing'], ['m_rearWingDamage', 'Rear wing'],
-  ['m_floorDamage', 'Floor'], ['m_diffuserDamage', 'Diffuser'], ['m_sidepodDamage', 'Sidepods'],
-  ['m_gearBoxDamage', 'Gearbox'], ['m_engineDamage', 'Engine'],
-];
 function createDamage(box) {
   box.innerHTML = DMG_KEYS.map(([, label]) =>
     `<div class="dc"><span>${label}</span><b>0<small>%</small></b><i class="dbar"><i></i></i></div>`).join('');
@@ -218,25 +187,8 @@ function drawPedalTrace(cv, trail) {
 const samples = [];
 
 // --- Track map ---
-// The outline is built from every car on track, bucketed by lap distance, so it draws even while
-// you sit in the garage. Pit-lane and inactive cars are skipped so the outline stays on the circuit.
-const TRACK_BUCKET_M = 8;
 const map = $('map'), mctx = map.getContext('2d');
 let track = new Map(), sessionUID = null, car = null;
-
-function learnTrack(rivals) {
-  for (const r of rivals || []) {
-    if (r.pit || r.result !== 2 || !(r.dist >= 0) || !(r.x || r.z)) continue;
-    const k = Math.floor(r.dist / TRACK_BUCKET_M);
-    // a car teleporting (garage -> grid, flashbacks) reports a position nowhere near its lap distance:
-    // ignore points that sit far from an already-known neighbouring bucket
-    const near = track.get(k - 1) || track.get(k + 1);
-    if (near && Math.hypot(near.x - r.x, near.z - r.z) > TRACK_BUCKET_M * 6) continue;
-    const p = track.get(k);
-    // light smoothing as several cars pass the same spot
-    track.set(k, p ? {x: p.x * 0.8 + r.x * 0.2, z: p.z * 0.8 + r.z * 0.2} : {x: r.x, z: r.z});
-  }
-}
 
 function drawMap() {
   const dpr = devicePixelRatio || 1;
@@ -427,7 +379,6 @@ function renderDriver(s) {
 
 // --- Recording ---
 let wasRecording = false, toastTimer = null;
-const fmtClock = sec => `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
 function renderRecording(s) {
   const r = s.recording;
   const btn = $('rec');
@@ -533,28 +484,6 @@ $('cmpLap').addEventListener('click', e => {
 $('cmpCanvas').addEventListener('pointermove', e => { cmpHoverX = e.offsetX; });
 $('cmpCanvas').addEventListener('pointerleave', () => { cmpHoverX = null; });
 
-function recordLapTrace(idx, t, lap) {
-  const dist = lap.m_lapDistance, lapNum = lap.m_currentLapNum;
-  let lt = lapTraces.get(idx);
-  if (!lt) { lt = {lap: lapNum, cur: [], last: [], lastLap: null}; lapTraces.set(idx, lt); }
-  if (lapNum !== lt.lap) {
-    // keep the finished lap only if it was mostly recorded (we may have joined mid-lap)
-    if (lt.cur.length > 20) { lt.last = lt.cur; lt.lastLap = lt.lap; }
-    lt.cur = [];
-    lt.lap = lapNum;
-  }
-  if (!(dist >= 0)) return; // before the start line on lap 1
-  let prev = lt.cur[lt.cur.length - 1];
-  if (prev && dist < prev.d - 30) {
-    // flashback / rewind: drop the part of the lap that was undone
-    lt.cur = lt.cur.filter(p => p.d <= dist);
-    prev = lt.cur[lt.cur.length - 1];
-  }
-  if (!prev || dist - prev.d >= 2) {
-    lt.cur.push({d: dist, speed: t.m_speed, thr: t.m_throttle, brk: t.m_brake, gear: t.m_gear});
-  }
-}
-
 function renderPicker(s) {
   const rivals = s.rivals || [];
   const html = rivals.map(r => {
@@ -619,9 +548,6 @@ function buildCompareCols() {
   });
 }
 
-const gapOk = ms => ms >= 0 && ms < 600000;
-// gap to the leader in ms, or null when unknown (the game reports 0 for cars without timing yet)
-const leaderGap = r => (r.pos === 1 ? 0 : r.gapLeader > 0 && r.gapLeader < 600000 ? r.gapLeader : null);
 function renderCompare(s) {
   if (cmp.hidden) return;
   renderPicker(s);
@@ -638,7 +564,7 @@ function renderCompare(s) {
     trail.push({t: now, speed: t.m_speed, thr: t.m_throttle, brk: t.m_brake, gear: t.m_gear});
     while (trail.length && now - trail[0].t > CMP_SECONDS * 1000) trail.shift();
     cmpTrails.set(d.idx, trail);
-    if (d.lap) recordLapTrace(d.idx, t, d.lap);
+    if (d.lap) recordLapTrace(lapTraces, d.idx, t, d.lap);
   }
 
   // best values across the compared drivers get highlighted
@@ -704,25 +630,6 @@ function renderCompare(s) {
     if (d.damage) col.damage.update(d.damage);
   });
 }
-
-// nearest sample to `key` in a list sorted by `field` (binary search)
-function nearest(pts, field, key) {
-  let lo = 0, hi = pts.length - 1;
-  if (hi < 0) return null;
-  while (lo < hi) {
-    const mid = (lo + hi) >> 1;
-    if (pts[mid][field] < key) lo = mid + 1; else hi = mid;
-  }
-  const a = pts[Math.max(0, lo - 1)], b = pts[lo];
-  return Math.abs(a[field] - key) <= Math.abs(b[field] - key) ? a : b;
-}
-const metricValue = (p, m) => (m === 'gear' ? Math.max(0, p.gear) : p[m]);
-const fmtMetric = (v, m) => (m === 'speed' ? Math.round(v) + ' km/h' : m === 'gear' ? (v ? String(v) : 'N') : Math.round(v * 100) + '%');
-const fmtDelta = (v, m) => {
-  const sign = v > 0 ? '+' : v < 0 ? '−' : '±';
-  const abs = Math.abs(v);
-  return sign + (m === 'speed' ? Math.round(abs) : m === 'gear' ? abs : Math.round(abs * 100) + '%');
-};
 
 function drawCompareChart() {
   const cv = $('cmpCanvas');
@@ -861,59 +768,12 @@ $('wearLimit').onchange = e => {
 };
 const setHtml = (el, html) => { if (el._html !== html) { el.innerHTML = html; el._html = html; } };
 
-// laps until each corner reaches the wear limit (Infinity when it isn't wearing, 0 when already past)
-function tyreProjection(st) {
-  if (!st || !st.wear) return null;
-  const corners = TYRES.map(ty => {
-    const w = st.wear[ty.i], rate = st.wearRate ? st.wearRate[ty.i] : null;
-    const left = w >= wearLimit ? 0 : rate == null ? null : rate > 0.05 ? (wearLimit - w) / rate : Infinity;
-    return {n: ty.n, wear: w, rate, left};
-  });
-  const known = corners.filter(c => c.left != null);
-  const worst = known.length ? known.reduce((a, b) => (b.left < a.left ? b : a)) : null;
-  return {corners, worst};
-}
-const fmtLaps = n => (n == null ? '–' : !isFinite(n) ? '∞' : n < 10 ? n.toFixed(1) : String(Math.round(n)));
-const lapsColor = n => (n == null || !isFinite(n) ? 'var(--green)' : n < 3 ? 'var(--red-hi)' : n < 6 ? 'var(--amber)' : 'var(--green)');
-const fmtS = ms => (ms / 1000).toFixed(Math.abs(ms) >= 10000 ? 1 : 2);
-const fmtRate = ms => (ms >= 0 ? '+' : '−') + fmtS(Math.abs(ms)) + 's';
-const nameOf = r => esc(r.name.slice(0, 12).toUpperCase());
-
-// where you'd come out if you pitted now: your gap to the leader plus the measured pit loss
-function rejoinEstimate(s, me) {
-  if (!s.pitLoss || !me) return null;
-  const mine = leaderGap(me);
-  if (mine == null) return null;
-  const after = mine + s.pitLoss.ms;
-  const others = (s.rivals || [])
-    .filter(r => !r.player && r.result === 2)
-    .map(r => ({r, g: leaderGap(r)}))
-    .filter(o => o.g != null)
-    .sort((a, b) => a.g - b.g);
-  const ahead = others.filter(o => o.g <= after), behind = others.filter(o => o.g > after);
-  return {pos: ahead.length + 1, ahead: ahead[ahead.length - 1], behind: behind[0], after};
-}
-
 function threatRow(label, other, gapMs, rateMs, chasing) {
   if (!other) return `<div class="sthreat"><span class="dir">${label}</span><span class="none">${chasing ? 'Leading' : 'Nobody behind'}</span></div>`;
-  let trend = 'measuring…', cls = 'dim';
-  if (rateMs != null) {
-    const closing = rateMs < -30, opening = rateMs > 30;
-    const lapsTo = target => Math.max(1, Math.ceil((gapMs - target) / -rateMs));
-    if (closing) {
-      const drs = gapMs > 1000 ? `DRS in ${lapsTo(1000)} lap${lapsTo(1000) === 1 ? '' : 's'}` : 'in DRS range';
-      trend = `${chasing ? 'catching' : 'closing'} ${fmtS(-rateMs)}s/lap · ${drs}`;
-      cls = chasing ? 'good' : 'bad';
-    } else if (opening) {
-      trend = `${chasing ? 'pulling away' : 'dropping back'} ${fmtS(rateMs)}s/lap`;
-      cls = chasing ? 'bad' : 'good';
-    } else {
-      trend = 'holding the gap';
-    }
-  }
+  const trend = battleTrend(gapMs, rateMs, chasing);
   const gap = gapOk(gapMs) && gapMs ? (chasing ? '+' : '−') + fmtS(gapMs) + 's' : '–';
   return `<div class="sthreat"><span class="dir">${label}</span><i style="background:${esc(other.color)}"></i><b>${nameOf(other)}</b>
-    <span class="sgap">${gap}</span><span class="strend ${cls}">${trend}</span></div>`;
+    <span class="sgap">${gap}</span><span class="strend ${trend.cls}">${trend.text}</span></div>`;
 }
 
 function renderStrategy(s) {
@@ -925,7 +785,7 @@ function renderStrategy(s) {
   const parts = [];
 
   // tyres
-  const tp = tyreProjection(st);
+  const tp = tyreProjection(st, wearLimit);
   const [cname] = COMPOUNDS[me.compound] || ['–'];
   let tyres = `<div class="sblk"><div class="shd"><span class="lbl">Tyres</span><small>${cname} · ${me.age} laps old</small></div>`;
   if (tp && tp.worst) {
@@ -991,7 +851,7 @@ function renderStrategy(s) {
 // one-line strategy summary for any driver (compare columns, rival popup)
 function stratMini(r) {
   const st = r && r.strategy;
-  const tp = tyreProjection(st);
+  const tp = tyreProjection(st, wearLimit);
   const bits = [];
   if (tp && tp.worst) {
     const w = tp.worst;
@@ -1005,7 +865,7 @@ function stratMini(r) {
 function render(s) {
   renderRecording(s);
   renderRivals(s);
-  learnTrack(s.rivals);
+  learnTrack(track, s.rivals);
   renderDriver(s);
   renderCompare(s);
   renderStrategy(s);
