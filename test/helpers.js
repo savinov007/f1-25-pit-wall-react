@@ -53,7 +53,7 @@ function loadPage({storage = {}, width = 1600, height = 900, desktop = true} = {
   const html = fs.readFileSync(path.join(PUBLIC, 'index.html'), 'utf8')
     .replace(/<script[^>]*><\/script>/g, '')
     .replace(/<link[^>]*fonts\.(googleapis|gstatic)[^>]*>/g, '');
-  const dom = new JSDOM(html, {url: 'http://localhost:3000/', pretendToBeVisual: true, runScripts: 'outside-only'});
+  const dom = new JSDOM(html, {url: 'http://localhost:3000/', pretendToBeVisual: true, runScripts: 'dangerously'});
   const w = dom.window;
   const drawLog = [];
   const sockets = [];
@@ -87,8 +87,11 @@ function loadPage({storage = {}, width = 1600, height = 900, desktop = true} = {
   }
   w.WebSocket = FakeWebSocket;
 
+  // classic <script> elements, as in the browser: top-level let/const share one global scope
   for (const script of ['lib.js', 'app.js', 'layout.js', 'popup.js']) {
-    w.eval(fs.readFileSync(path.join(PUBLIC, script), 'utf8'));
+    const el = w.document.createElement('script');
+    el.textContent = fs.readFileSync(path.join(PUBLIC, script), 'utf8');
+    w.document.body.appendChild(el);
   }
 
   const $ = id => w.document.getElementById(id);
