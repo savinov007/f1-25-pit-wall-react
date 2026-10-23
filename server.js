@@ -137,6 +137,50 @@ function demoFrame(t) {
   };
 }
 
+// Summary of a recording for the replay list: size, when it was recorded and how long it is. The header is the
+// first line; the length is the timestamp of the last packet line, read from the end of the file.
+function describeRecording(dir, file) {
+  const full = path.join(dir, file);
+  let fd, st, out;
+  try {
+    st = fs.statSync(full);
+    out = {file, bytes: st.size, modified: st.mtimeMs, startedAt: null, duration: null};
+    fd = fs.openSync(full, 'r');
+    const head = Buffer.alloc(Math.min(1024, st.size));
+    fs.readSync(fd, head, 0, head.length, 0);
+    const header = JSON.parse(head.toString('utf8').split('\n')[0]);
+    if (header.type !== 'f1rec') return null;
+    out.startedAt = header.startedAt || null;
+    const size = Math.min(16384, st.size), tail = Buffer.alloc(size);
+    fs.readSync(fd, tail, 0, size, st.size - size);
+    const lines = tail.toString('utf8').split('\n').filter(Boolean);
+    for (let i = lines.length - 1; i > 0; i--) {
+      try {
+        const t = JSON.parse(lines[i])[0];
+        if (Number.isFinite(t)) { out.duration = t; break; }
+      } catch (err) {
+        // partial or damaged line: try the one before
+      }
+    }
+  } catch (err) {
+    return null; // not a readable recording
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+  }
+  return out;
+}
+
+// Recordings in dir, newest first
+function listRecordings(dir) {
+  let names = [];
+  try {
+    names = fs.readdirSync(dir).filter(n => n.endsWith('.jsonl'));
+  } catch (err) {
+    return [];
+  }
+  return names.map(n => describeRecording(dir, n)).filter(Boolean).sort((a, b) => b.modified - a.modified);
+}
+
 /**
  * One dashboard instance: HTTP for the page, a WebSocket that pushes state ~30x/s, and either the UDP
  * telemetry listener or the demo generator. Ports may be 0 (ephemeral) — read them back after start().
@@ -147,6 +191,8 @@ function createDashboard(options = {}) {
     udpPort = 20777,
     demo = false,
     replayFile = null,
+    replayIdleMs = 60000, // a replay dashboard opened from the list stops this long after its last tab closes
+    onIdle = null,
     recDir = path.join(__dirname, 'recordings'),
     recMaxBytes = REC_MAX_BYTES,
     broadcastMs = 33,
@@ -285,7 +331,44 @@ function createDashboard(options = {}) {
     };
   }
 
+  // --- Replay list: recordings in recDir, each opened as its own replay dashboard on a free port ---
+  const replays = new Set();
+  async function openReplay(file) {
+    const name = path.basename(String(file || ''));
+    if (!name.endsWith('.jsonl') || !fs.existsSync(path.join(recDir, name))) throw new Error('No such recording');
+    const dash = createDashboard({
+      replayFile: path.join(recDir, name), httpPort: 0, udpPort: 0, recDir, log, broadcastMs,
+      replayIdleMs, onIdle: () => { replays.delete(dash); dash.stop(); },
+    });
+    replays.add(dash);
+    try {
+      await dash.start();
+    } catch (err) {
+      replays.delete(dash);
+      await dash.stop();
+      throw err;
+    }
+    return {port: dash.ports.http, file: name};
+  }
+
+  function api(req, res) {
+    const send = (code, body) => res.writeHead(code, {'Content-Type': 'application/json'}).end(JSON.stringify(body));
+    if (replayFile) return send(404, {error: 'Not available while replaying'});
+    if (req.method === 'GET') return send(200, listRecordings(recDir));
+    if (req.method !== 'POST') return send(405, {error: 'Method not allowed'});
+    let body = '';
+    req.on('data', c => { if ((body += c).length > 4096) req.destroy(); });
+    req.on('end', async () => {
+      try {
+        send(200, await openReplay(JSON.parse(body).file));
+      } catch (err) {
+        send(err.message === 'No such recording' ? 404 : 400, {error: err.message});
+      }
+    });
+  }
+
   const httpServer = http.createServer((req, res) => {
+    if (req.url.split('?')[0] === '/api/replays') return api(req, res);
     let name;
     try {
       name = req.url === '/' ? 'index.html' : path.normalize(decodeURIComponent(req.url.split('?')[0]));
@@ -346,7 +429,14 @@ function createDashboard(options = {}) {
     }
   }
 
+  let idleTimer = null;
+  const armIdle = () => {
+    clearTimeout(idleTimer);
+    if (replayFile && onIdle && replayIdleMs > 0) idleTimer = setTimeout(onIdle, replayIdleMs);
+  };
   wss.on('connection', ws => {
+    clearTimeout(idleTimer);
+    ws.on('close', () => { if (!wss.clients.size) armIdle(); });
     ws.selected = null;
     ws.compare = [];
     ws.on('message', data => handleClientMessage(ws, data));
@@ -521,6 +611,7 @@ function createDashboard(options = {}) {
     } else if (replayFile) {
       log.log(`Replay mode: ${recording.packets.length} packets from ${replayFile}`);
       player = createPlayer(recording.packets, {send: handlePacket});
+      armIdle();
     } else {
       await new Promise(resolve => {
         client.socket.once('listening', resolve);
@@ -546,7 +637,9 @@ function createDashboard(options = {}) {
     if (stopped) return;
     stopped = true;
     timers.splice(0).forEach(clearInterval);
+    clearTimeout(idleTimer);
     if (player) player.stop();
+    await Promise.all([...replays].map(d => d.stop()));
     await stopRecording();
     if (client && client.socket) await new Promise(resolve => client.socket.close(resolve));
     for (const ws of wss.clients) ws.terminate();
@@ -560,7 +653,7 @@ function createDashboard(options = {}) {
   };
 }
 
-module.exports = {createDashboard, teamFor, minutesToMs, localIps, demoRivals, demoFrame, demoPos, MIME};
+module.exports = {createDashboard, listRecordings, describeRecording, teamFor, minutesToMs, localIps, demoRivals, demoFrame, demoPos, MIME};
 
 if (require.main === module) {
   const at = process.argv.indexOf('--replay');

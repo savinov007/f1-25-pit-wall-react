@@ -260,3 +260,12 @@ describe('lap type tag', () => {
     for (const s of [0, 4, undefined, 9]) assert.equal(L.lapTag(s), null);
   });
 });
+
+describe('file size', () => {
+  test('MB with one decimal, GB above 1 GiB, never 0.0', () => {
+    assert.equal(L.fmtSize(2621440), '2.5 MB');
+    assert.equal(L.fmtSize(126515802), '120.7 MB');
+    assert.equal(L.fmtSize(3 * 1073741824), '3.0 GB');
+    assert.equal(L.fmtSize(10), '0.1 MB');
+  });
+});

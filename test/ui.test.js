@@ -772,3 +772,133 @@ describe('hidden elements', () => {
     assert.equal(p.$('rp').hidden, true);
   });
 });
+
+describe('saved replays list', () => {
+  const recs = [
+    {file: 'session-b.jsonl', bytes: 126515802, modified: 1761260000000, startedAt: '2026-10-23T22:55:57.180Z', duration: 539463},
+    {file: 'session-a.jsonl', bytes: 1048576, modified: 1761250000000, startedAt: null, duration: null},
+  ];
+  // fetch and window.open stubs; `tab` records what the new tab was told to do
+  function stubs(p, {list = recs, openResult = {port: 4567, file: 'session-b.jsonl'}, openStatus = 200, blocked = false} = {}) {
+    const calls = [];
+    const tab = {written: '', href: '', closed: false, document: {write(h) { tab.written += h; }}, location: {set href(v) { tab.href = v; }}, close() { tab.closed = true; }};
+    const opened = [];
+    p.w.open = (...a) => { opened.push(a); return blocked ? null : tab; };
+    p.w.fetch = async (url, opts) => {
+      calls.push([url, opts]);
+      if (opts && opts.method === 'POST') return {ok: openStatus === 200, status: openStatus, json: async () => openResult};
+      if (list === null) return {ok: false, status: 500, json: async () => ({})};
+      return {ok: true, status: 200, json: async () => list};
+    };
+    return {calls, tab, opened};
+  }
+  const settle = p => p.tick(5);
+
+  test('the button opens a list of recordings, newest first, with length and size', async () => {
+    const p = await boot();
+    stubs(p);
+    assert.equal(p.$('rl').hidden, true);
+    p.$('replaysBtn').click();
+    assert.equal(p.$('rl').hidden, false);
+    await settle(p);
+    const rows = [...p.doc.querySelectorAll('.rlrow')];
+    assert.equal(rows.length, 2);
+    assert.match(rows[0].textContent, /8:59/);
+    assert.match(rows[0].textContent, /120\.7 MB/);
+    assert.match(rows[0].textContent, /session-b\.jsonl/);
+    assert.match(rows[1].textContent, /–/, 'unknown length');
+    assert.match(p.$('rlNote').textContent, /Opens in a new tab/);
+  });
+
+  test('empty and failing lists say so', async () => {
+    const p = await boot();
+    stubs(p, {list: []});
+    p.$('replaysBtn').click();
+    await settle(p);
+    assert.equal(p.doc.querySelectorAll('.rlrow').length, 0);
+    assert.match(p.$('rlNote').textContent, /No recordings yet/);
+    stubs(p, {list: null});
+    p.$('replaysBtn').click();
+    await settle(p);
+    assert.match(p.$('rlNote').textContent, /Could not load/);
+  });
+
+  test('choosing a recording opens a new tab and points it at the replay', async () => {
+    const p = await boot();
+    const s = stubs(p);
+    p.$('replaysBtn').click();
+    await settle(p);
+    p.doc.querySelector('.rlrow').click();
+    assert.equal(s.opened.length, 1, 'tab opened inside the click');
+    assert.match(s.tab.written, /Loading replay/);
+    await settle(p);
+    const post = s.calls.find(c => c[1] && c[1].method === 'POST');
+    assert.equal(post[0], '/api/replays');
+    assert.deepEqual(JSON.parse(post[1].body), {file: 'session-b.jsonl'});
+    assert.equal(s.tab.href, 'http://localhost:4567/');
+    assert.equal(p.$('rl').hidden, true, 'list closes');
+    assert.equal(s.tab.closed, false);
+  });
+
+  test('a failed open closes the blank tab and explains', async () => {
+    const p = await boot();
+    const s = stubs(p, {openStatus: 404, openResult: {error: 'No such recording'}});
+    p.$('replaysBtn').click();
+    await settle(p);
+    p.doc.querySelector('.rlrow').click();
+    await settle(p);
+    assert.equal(s.tab.closed, true);
+    assert.equal(p.$('rl').hidden, false, 'list stays open to pick another');
+    assert.match(p.$('rlNote').textContent, /Could not open the replay: No such recording/);
+  });
+
+  test('a blocked popup falls back to a link', async () => {
+    const p = await boot();
+    const s = stubs(p, {blocked: true});
+    p.$('replaysBtn').click();
+    await settle(p);
+    p.doc.querySelector('.rlrow').click();
+    await settle(p);
+    assert.equal(s.opened.length, 2, 'tried again once the address was known');
+    assert.equal(s.opened[1][0], 'http://localhost:4567/');
+  });
+
+  test('closing: the x, the backdrop and Escape; clicking inside the box keeps it open', async () => {
+    const p = await boot();
+    stubs(p);
+    const open = async () => { p.$('replaysBtn').click(); await settle(p); };
+    await open();
+    p.$('rlClose').click();
+    assert.equal(p.$('rl').hidden, true);
+    await open();
+    p.doc.querySelector('.rlbox').click();
+    assert.equal(p.$('rl').hidden, false);
+    p.$('rl').click();
+    assert.equal(p.$('rl').hidden, true);
+    await open();
+    p.key(p.doc, 'Escape');
+    assert.equal(p.$('rl').hidden, true);
+    p.key(p.doc, 'Escape'); // already closed: harmless
+  });
+
+  test('the button is there on the live dashboard but not inside a replay', async () => {
+    const p = await boot();
+    p.push(dashboardState());
+    assert.equal(p.$('replaysBtn').hidden, false);
+    p.push(dashboardState({replay: {file: 'x.jsonl', playing: true, finished: false, speed: 1, loop: false, pos: 0, duration: 1000, packets: 5}}));
+    assert.equal(p.$('replaysBtn').hidden, true);
+    p.push(dashboardState());
+    assert.equal(p.$('replaysBtn').hidden, false);
+  });
+});
+
+describe('stylesheet class clashes', () => {
+  test('the replay list overlay does not reuse the tyre callout class "rl" (rear left)', () => {
+    const css = require('fs').readFileSync(require('path').join(__dirname, '..', 'public', 'style.css'), 'utf8');
+    assert.doesNotMatch(css, /^\.rl\s*\{/m, 'a bare .rl rule would hit the rear-left tyre callout');
+    return boot().then(p => {
+      assert.equal(p.$('rl').classList.contains('rl'), false);
+      assert.ok(p.doc.querySelector('.ti.rl'), 'tyre callout still uses .rl');
+    });
+  });
+});

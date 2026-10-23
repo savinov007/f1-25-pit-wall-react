@@ -8,7 +8,7 @@ const dgram = require('dgram');
 const net = require('net');
 const {spawn} = require('child_process');
 const WebSocket = require('ws');
-const {createDashboard, teamFor, minutesToMs, localIps, demoRivals, demoFrame, demoPos} = require('../server');
+const {createDashboard, listRecordings, describeRecording, teamFor, minutesToMs, localIps, demoRivals, demoFrame, demoPos} = require('../server');
 const {loadRecording} = require('../replay');
 const {fixturePackets, ROOT} = require('./helpers');
 
@@ -357,6 +357,121 @@ describe('replay mode', () => {
     const bad = run(['--replay', path.join(ROOT, 'package.json')]);
     assert.equal(bad.status, 1);
     assert.match(bad.stderr, /Not a recording file/);
+  });
+});
+
+describe('replay list', () => {
+  const {FIXTURE} = require('./helpers');
+  const post = (port, body) => new Promise((resolve, reject) => {
+    const req = http.request({host: '127.0.0.1', port, path: '/api/replays', method: 'POST'}, res => {
+      let out = '';
+      res.on('data', c => (out += c));
+      res.on('end', () => resolve({status: res.statusCode, body: JSON.parse(out)}));
+    });
+    req.on('error', reject);
+    req.end(typeof body === 'string' ? body : JSON.stringify(body));
+  });
+  // a recordings folder with the fixture (copied twice, so ordering can be checked) and files that aren't recordings
+  function recFolder() {
+    const dir = tmpDir();
+    fs.copyFileSync(FIXTURE, path.join(dir, 'old.jsonl'));
+    fs.copyFileSync(FIXTURE, path.join(dir, 'new.jsonl'));
+    fs.utimesSync(path.join(dir, 'old.jsonl'), new Date(2020, 0, 1), new Date(2020, 0, 1));
+    fs.writeFileSync(path.join(dir, 'junk.jsonl'), 'not a recording\n');
+    fs.writeFileSync(path.join(dir, 'empty.jsonl'), '');
+    fs.writeFileSync(path.join(dir, 'notes.txt'), 'hello');
+    return dir;
+  }
+  async function running(dir, opts = {}) {
+    const d = offline({recDir: dir, ...opts});
+    await d.start();
+    return d;
+  }
+
+  test('lists recordings newest first with size, start time and length', () => {
+    const list = listRecordings(recFolder());
+    assert.deepEqual(list.map(r => r.file), ['new.jsonl', 'old.jsonl'], 'junk, empty and non-jsonl files skipped');
+    const r = list[0];
+    assert.equal(r.bytes, fs.statSync(FIXTURE).size);
+    assert.equal(typeof r.startedAt, 'string');
+    assert.ok(r.duration > 1000 && r.duration < 10000, `fixture is a couple of seconds long: ${r.duration}`);
+    assert.deepEqual(listRecordings(path.join(tmpDir(), 'missing')), [], 'no folder yet');
+    assert.equal(describeRecording(recFolder(), 'junk.jsonl'), null);
+    assert.equal(describeRecording(recFolder(), 'nope.jsonl'), null);
+  });
+
+  test('GET /api/replays returns the list', async () => {
+    const d = await running(recFolder());
+    const res = await get(d.ports.http, '/api/replays');
+    assert.equal(res.status, 200);
+    assert.match(res.type, /json/);
+    assert.deepEqual(JSON.parse(res.body).map(r => r.file), ['new.jsonl', 'old.jsonl']);
+  });
+
+  test('POST opens the recording as its own replay dashboard on a free port', async () => {
+    const d = await running(recFolder());
+    const opened = await post(d.ports.http, {file: 'new.jsonl'});
+    assert.equal(opened.status, 200);
+    assert.equal(opened.body.file, 'new.jsonl');
+    assert.notEqual(opened.body.port, d.ports.http);
+    const ws = new WebSocket(`ws://127.0.0.1:${opened.body.port}`);
+    const msg = await new Promise(resolve => ws.on('message', m => resolve(JSON.parse(m))));
+    assert.equal(msg.replay.file, 'new.jsonl');
+    assert.equal(msg.replay.playing, true);
+    assert.equal((await get(opened.body.port, '/')).status, 200, 'serves the dashboard page');
+    ws.close();
+    // the live dashboard is untouched
+    assert.equal(d.refreshState().replay, null);
+    const second = await post(d.ports.http, {file: 'new.jsonl'});
+    assert.notEqual(second.body.port, opened.body.port, 'each open gets its own player');
+  });
+
+  test('rejects bad requests: unknown files, path escapes, other file types, bad JSON, wrong method', async () => {
+    const dir = recFolder();
+    const d = await running(dir);
+    assert.equal((await post(d.ports.http, {file: 'missing.jsonl'})).status, 404);
+    assert.equal((await post(d.ports.http, {file: 'notes.txt'})).status, 404);
+    assert.equal((await post(d.ports.http, {})).status, 404);
+    const escape = await post(d.ports.http, {file: '../package.json'});
+    assert.equal(escape.status, 404, 'only files inside the recordings folder');
+    assert.equal((await post(d.ports.http, {file: 'junk.jsonl'})).status, 400, 'exists but is not a recording');
+    assert.equal((await post(d.ports.http, '{nope')).status, 400);
+    const put = await new Promise(resolve => http.request({host: '127.0.0.1', port: d.ports.http, path: '/api/replays', method: 'PUT'}, res => { res.resume(); resolve(res.statusCode); }).end());
+    assert.equal(put, 405);
+    assert.equal(d.refreshState().replay, null);
+  });
+
+  test('a replay dashboard has no replay list of its own', async () => {
+    const d = await running(recFolder(), {replayFile: FIXTURE});
+    assert.equal((await get(d.ports.http, '/api/replays')).status, 404);
+  });
+
+  test('an opened replay stops itself once its last tab has closed', async () => {
+    const d = await running(recFolder(), {replayIdleMs: 150});
+    const {port} = (await post(d.ports.http, {file: 'new.jsonl'})).body;
+    const ws = new WebSocket(`ws://127.0.0.1:${port}`);
+    await new Promise(resolve => ws.on('open', resolve));
+    await new Promise(r => setTimeout(r, 300));
+    assert.equal((await get(port, '/')).status, 200, 'still running while a tab is connected');
+    ws.close();
+    const gone = async () => { try { await get(port, '/'); return false; } catch (err) { return true; } };
+    const end = Date.now() + 3000;
+    let stopped = false;
+    while (Date.now() < end && !(stopped = await gone())) await new Promise(r => setTimeout(r, 50));
+    assert.equal(stopped, true, 'stopped after the idle time');
+  });
+
+  test('a replay nobody ever connects to also stops, and stopping the dashboard stops its replays', async () => {
+    const d = await running(recFolder(), {replayIdleMs: 150});
+    const {port} = (await post(d.ports.http, {file: 'new.jsonl'})).body;
+    const gone = async p => { try { await get(p, '/'); return false; } catch (err) { return true; } };
+    const end = Date.now() + 3000;
+    while (Date.now() < end && !(await gone(port))) await new Promise(r => setTimeout(r, 50));
+    assert.equal(await gone(port), true, 'never-connected replay stopped');
+    const e = await running(recFolder(), {replayIdleMs: 60000});
+    const other = (await post(e.ports.http, {file: 'old.jsonl'})).body.port;
+    await e.stop();
+    assert.equal(await gone(other), true, 'parent stop closes its replays');
   });
 });
 
