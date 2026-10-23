@@ -5,10 +5,12 @@ const os = require('os');
 const path = require('path');
 const http = require('http');
 const dgram = require('dgram');
+const net = require('net');
+const {spawn} = require('child_process');
 const WebSocket = require('ws');
 const {createDashboard, teamFor, minutesToMs, localIps, demoRivals, demoFrame, demoPos} = require('../server');
 const {loadRecording} = require('../replay');
-const {fixturePackets} = require('./helpers');
+const {fixturePackets, ROOT} = require('./helpers');
 
 const quiet = {log() {}, warn() {}, error() {}};
 const tmpDirs = [];
@@ -213,6 +215,27 @@ describe('recording', () => {
     assert.equal(d.recordingState().active, false);
     assert.ok(d.recordingState().lastFile);
   });
+  test('stops at the size limit', async () => {
+    const warnings = [];
+    const d = offline({recMaxBytes: 5000, log: {...quiet, warn: m => warnings.push(m)}});
+    d.startRecording();
+    fixturePackets().slice(0, 20).forEach(p => d.handlePacket(p.buf));
+    assert.equal(d.recordingState().active, false);
+    assert.ok(d.recordingState().lastBytes > 5000);
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0], /limit, stopping/);
+  });
+  test('a failed write ends the recording instead of crashing', {skip: process.getuid && process.getuid() === 0}, async () => {
+    const dir = tmpDir();
+    fs.chmodSync(dir, 0o500);
+    const errors = [];
+    const d = offline({recDir: dir, log: {...quiet, error: m => errors.push(m)}});
+    d.startRecording();
+    await until(() => errors.length);
+    assert.match(errors[0], /Recording failed/);
+    assert.equal(d.recordingState().active, false);
+    fs.chmodSync(dir, 0o700);
+  });
   test('recording is unavailable in demo mode', () => {
     const d = offline({demo: true});
     d.startRecording();
@@ -237,6 +260,20 @@ describe('running server', () => {
       assert.equal((await get(port, '/%E0')).status, 400);
       assert.equal((await get(port, '/%2e%2e/server.js')).status, 404, 'cannot read files outside public/');
       assert.equal((await get(port, '/../package.json')).status, 404);
+      // a request path without the leading slash could climb out of public/: refused
+      const raw = await new Promise(resolve => {
+        const sock = net.connect(port, '127.0.0.1', () => sock.write('GET x/../../server.js HTTP/1.1\r\nHost: x\r\n\r\n'));
+        let data = '';
+        sock.on('data', c => (data += c));
+        sock.on('end', () => resolve(data));
+        sock.on('close', () => resolve(data));
+        setTimeout(() => sock.end(), 300);
+      });
+      assert.match(raw, /^HTTP\/1\.1 400/, "Node's parser refuses it before our code runs");
+      // ...and the handler's own guard refuses it too, should a path like that ever reach it
+      const res = {status: null, writeHead(code) { this.status = code; return this; }, end() {}};
+      d.httpServer.emit('request', {url: 'x/../../server.js'}, res);
+      assert.equal(res.status, 403);
     } finally {
       await d.stop();
     }
@@ -270,6 +307,20 @@ describe('running server', () => {
     }
   });
 
+  test('counts packets per second', async () => {
+    const d = offline();
+    await d.start();
+    try {
+      feedFixture(d);
+      // motion, session, lap data, participants, telemetry, status and damage packets count; 191 in the fixture
+      await until(() => d.state.pps > 0, 2500);
+      assert.equal(d.state.pps, 191);
+      await until(() => d.state.pps === 0, 2500);
+    } finally {
+      await d.stop();
+    }
+  });
+
   test('demo: synthetic frames, and cars differ in detail', async () => {
     const d = offline({demo: true, broadcastMs: 20});
     await d.start();
@@ -283,5 +334,36 @@ describe('running server', () => {
     } finally {
       await d.stop();
     }
+  });
+});
+
+describe('command line', () => {
+  // starts `node server.js` on a random port, returns the process, its output so far and the port
+  async function launch(args, env = {}) {
+    const port = 30000 + Math.floor(Math.random() * 20000);
+    const child = spawn(process.execPath, [path.join(ROOT, 'server.js'), ...args], {
+      env: {...process.env, PORT: String(port), UDP_PORT: String(port + 1), ...env},
+    });
+    const out = {text: ''};
+    child.stdout.on('data', c => (out.text += c));
+    await until(() => out.text.includes('Dashboard:'), 5000);
+    return {child, out, port};
+  }
+  const exited = child => new Promise(r => child.on('exit', code => r(code)));
+
+  test('demo mode serves the page and stops cleanly on Ctrl+C', async () => {
+    const {child, out, port} = await launch(['--demo']);
+    assert.match(out.text, /Demo mode/);
+    assert.equal((await get(port, '/')).status, 200);
+    child.kill('SIGINT');
+    assert.equal(await exited(child), 0);
+  });
+
+  test('live mode listens on UDP_PORT', async () => {
+    const {child, out, port} = await launch([]);
+    await until(() => out.text.includes('Listening for F1 UDP telemetry'), 5000);
+    assert.match(out.text, new RegExp(`port ${port + 1}`));
+    child.kill('SIGINT');
+    assert.equal(await exited(child), 0);
   });
 });
