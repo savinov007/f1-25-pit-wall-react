@@ -174,14 +174,19 @@
   <div class="waitbox">
     <div class="pulse"></div>
     <h1>Waiting for game…</h1>
-    <p class="hint">In F1 25 open <b>Settings → Telemetry Settings</b> and enter:</p>
-    <div class="setup">
+    <p class="hint">Which telemetry format will the game send?</p>
+    <div class="fmtpick" id="fmtPick">
+      <button type="button" data-format="2026"><b>F1 26</b><small>UDP Format 2026</small></button>
+      <button type="button" data-format="2025"><b>F1 25</b><small>UDP Format 2025</small></button>
+    </div>
+    <p class="hint" id="setupHint" hidden>In F1 25 open <b>Settings → Telemetry Settings</b> and enter:</p>
+    <div class="setup" id="setupList" hidden>
       <div><span>UDP Telemetry</span><b>On</b></div>
       <div><span>UDP Broadcast Mode</span><b>Off</b></div>
       <div class="ipline"><span>UDP IP Address</span><b id="waitIp">–</b></div>
       <div><span>UDP Port</span><b id="waitPort">20777</b></div>
       <div><span>UDP Send Rate</span><b>20Hz</b></div>
-      <div><span>UDP Format</span><b>2026 <small>(F1 26) or 2025</small></b></div>
+      <div><span>UDP Format</span><b id="waitFormat">2026</b></div>
     </div>
     <p class="alt" id="waitAlt"></p>
     <p class="alt">Game on this Mac? Use <b>127.0.0.1</b>. Then start a session — this screen closes when data arrives.</p>

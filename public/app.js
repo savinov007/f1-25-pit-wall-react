@@ -295,6 +295,31 @@ function drawMap() {
 
 let bestLap = 0, lastSeenLast = 0;
 
+// the game's UDP format, chosen on the waiting screen and remembered ('2025' | '2026' | null = not chosen yet)
+let chosenFormat = null;
+try { const v = localStorage.getItem('pitwall-format'); if (v === '2025' || v === '2026') chosenFormat = v; } catch (err) { /* ask again */ }
+function syncFormatPick() {
+  document.querySelectorAll('#fmtPick button').forEach(b => b.classList.toggle('on', b.dataset.format === chosenFormat));
+  $('fmtPick').classList.toggle('need', !chosenFormat);
+  $('setupHint').hidden = $('setupList').hidden = !chosenFormat;
+  if (chosenFormat) $('waitFormat').textContent = chosenFormat + (chosenFormat === '2026' ? ' (F1 26)' : ' (F1 25)');
+}
+document.querySelectorAll('#fmtPick button').forEach(b => {
+  b.onclick = () => {
+    chosenFormat = b.dataset.format;
+    try { localStorage.setItem('pitwall-format', chosenFormat); } catch (err) { /* not persisted */ }
+    syncFormatPick();
+  };
+});
+syncFormatPick();
+// tell the player when the game sends a different format than the one they picked (once per mismatch)
+let warnedFormat = null;
+function checkFormat(format) {
+  if (!chosenFormat || !format || String(format) === chosenFormat || warnedFormat === format) return;
+  warnedFormat = format;
+  showToast(`The game is sending UDP format <b>${format}</b>, not ${chosenFormat}. Showing ${format} data.`, 8000);
+}
+
 function renderWait(s) {
   const box = $('wait');
   box.hidden = s.hasData || !s.setup;
@@ -422,6 +447,14 @@ function renderDriver(s) {
 
 // --- Recording ---
 let wasRecording = false, toastTimer = null;
+function showToast(html, ms = 12000) {
+  const el = $('toast');
+  el.innerHTML = html;
+  el.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { el.hidden = true; }, ms);
+}
+
 function renderRecording(s) {
   const r = s.recording;
   const btn = $('rec');
@@ -431,11 +464,7 @@ function renderRecording(s) {
   btn.title = r.available ? 'Record raw game packets to a file' : 'Recording needs live game data (not available in demo mode)';
   $('recText').textContent = r.active ? `${fmtClock(r.seconds)} · ${r.packets.toLocaleString()} pkts` : 'REC';
   if (wasRecording && !r.active && r.lastFile) {
-    const toast = $('toast');
-    toast.innerHTML = `Saved <code>${esc(r.lastFile)}</code> · ${(r.lastBytes / 1048576).toFixed(1)} MB · ${r.lastPackets.toLocaleString()} packets<br>Replay: <code>npm run replay -- ${esc(r.lastFile)}</code>`;
-    toast.hidden = false;
-    clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => { toast.hidden = true; }, 12000);
+    showToast(`Saved <code>${esc(r.lastFile)}</code> · ${(r.lastBytes / 1048576).toFixed(1)} MB · ${r.lastPackets.toLocaleString()} packets<br>Replay: <code>npm run replay -- ${esc(r.lastFile)}</code>`);
   }
   wasRecording = r.active;
 }
@@ -930,6 +959,7 @@ function render(s) {
     $('airTemp').textContent = se.airTemp;
     $('totalLaps').textContent = se.totalLaps || '–';
     $('fmtChip').hidden = !(se.packetFormat >= 2026);
+    checkFormat(se.packetFormat);
     $('reaction').hidden = !(se.reactionTime > 0);
     if (se.reactionTime > 0) $('reaction').textContent = `REACTION ${se.reactionTime.toFixed(3)}s`;
     $('mapLegend').hidden = !((se.aeroZones && se.aeroZones.length) || (se.drsZones && se.drsZones.length));

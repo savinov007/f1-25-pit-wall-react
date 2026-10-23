@@ -28,11 +28,17 @@ const validIdx = v => Number.isInteger(v) && v >= 0 && v < MAX_CARS;
 
 // Team ids per the F1 25 2026 Season Pack spec. Format 2026 sends uint16 ids (476 Mercedes '26 ...
 // 486 Cadillac '26); format 2025 truncates them to uint8, so the same teams arrive as 220-230.
+// The library's colours are the old broadcast palette (near-black RB, plain white Haas, navy Red Bull) that
+// disappear on the dark dashboard, so F1 teams get the current livery colours instead.
+const TEAM_COLORS = {
+  'Mercedes': '#27F4D2', 'Ferrari': '#E80020', 'Red Bull Racing': '#3671C6', 'Williams': '#64C4FF',
+  'Aston Martin': '#229971', 'Alpine': '#0093CC', 'RB': '#6692FF', 'Haas': '#B6BABD', 'McLaren': '#FF8000',
+  'Sauber': '#52E252', 'Audi': '#F50537', 'Cadillac': '#D9D9E3',
+};
 function teamFor(id) {
   const t26 = TEAMS[2026] || {}, t25 = TEAMS[2025] || {};
-  if (id >= 256) return t26[id] || null;
-  if (t25[id]) return t25[id];
-  return t26[id + 256] || null;
+  const t = id >= 256 ? t26[id] : t25[id] || t26[id + 256];
+  return t ? {...t, color: TEAM_COLORS[t.name] || t.color} : null;
 }
 
 // lap fractions of the active aero zones in use (full or partial set) and the DRS zones

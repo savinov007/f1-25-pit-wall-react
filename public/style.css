@@ -643,3 +643,14 @@ body.popup-drag, body.popup-drag * { cursor: grabbing !important; user-select: n
 .maplegend .lz { width: 14px; height: 3px; border-radius: 2px; margin-left: 6px; }
 .maplegend .lz.aero { background: var(--cyan); } .maplegend .lz.drsz { background: var(--green); }
 .setup b small { font-family: var(--f-ui); color: var(--dim); font-weight: 500; }
+
+/* telemetry format picker on the waiting screen */
+.fmtpick { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 0 0 16px; }
+.fmtpick button { display: flex; flex-direction: column; gap: 2px; align-items: center; padding: 12px 10px; cursor: pointer;
+  background: var(--panel2, rgba(255, 255, 255, .03)); color: var(--dim); border: 1px solid var(--line); border-radius: 10px; font: inherit; }
+.fmtpick button b { font-family: var(--f-display, var(--f-ui)); font-size: 20px; color: var(--text, #fff); }
+.fmtpick button small { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; }
+.fmtpick button:hover { border-color: #5a6075; }
+.fmtpick button.on { border-color: #e10600; background: rgba(225, 6, 0, .14); color: #fff; }
+.fmtpick.need button { animation: fmtneed 1.4s ease-in-out infinite; }
+@keyframes fmtneed { 50% { border-color: #e10600; } }
