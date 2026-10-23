@@ -13,7 +13,8 @@
   },
   "dependencies": {
     "binary-parser": "^1.5.0",
-    "struct": "^0.0.12"
+    "struct": "^0.0.12",
+    "ws": "^8.18.0"
   },
   "devDependencies": {
     "@types/binary-parser": "^1.5.0",
@@ -29,7 +30,10 @@
   },
   "scripts": {
     "prepublishOnly": "npm run build",
-    "start": "npm run build && node build/src/playground/index.js",
+    "start": "npm run build && node server.js",
+    "listen": "node listen.js",
+    "replay": "node replay.js",
+    "demo": "npm run build && node server.js --demo",
     "build": "tsc",
     "build:link": "npm run build && npm link",
     "type-check:watch": "npm run type-check -- --watch",

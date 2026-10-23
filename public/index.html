@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>F1 25 Pit Wall</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <div class="brand"><span class="stripe"></span>PIT WALL</div>
+  <div class="session"><span id="track">—</span><span class="sep">/</span><span id="weather">—</span><span class="sep">/</span><span>Track <b id="trackTemp">–</b>°C</span><span class="sep">/</span><span>Air <b id="airTemp">–</b>°C</span></div>
+  <div class="conn"><button id="rec" class="rec" title="Record raw game packets to a file" disabled><i></i><span id="recText">REC</span></button><button id="resetLayout" class="hbtn" title="Reset section sizes">⟲ Layout</button><span id="dot" class="dot"></span><span id="connText">Connecting…</span><span class="pps"><b id="pps">0</b> pkt/s</span></div>
+</header>
+
+<main>
+  <div class="col" id="c1">
+  <section class="card driving" id="p-driving">
+    <h2>Driving</h2>
+    <div class="rev" id="rev"></div>
+    <div class="speedrow">
+      <div class="gear"><div class="lbl">GEAR</div><div id="gear">N</div></div>
+      <div class="speed"><div id="speed">0</div><div class="lbl">KM/H</div></div>
+      <div class="rpm"><div class="lbl">RPM</div><div id="rpm">0</div><div id="drs" class="drs">DRS</div></div>
+    </div>
+    <div class="pedals">
+      <div class="pedal"><div class="bar"><i id="thr" class="thr"></i></div><span>THR</span></div>
+      <div class="pedal"><div class="bar"><i id="brk" class="brk"></i></div><span>BRK</span></div>
+      <div class="steer"><div class="steerbar"><i id="steer"></i></div><span>STEER</span></div>
+    </div>
+    <canvas id="trace" height="120"></canvas>
+  </section>
+  <div class="split" data-dir="y" role="separator" aria-orientation="horizontal" aria-label="Resize sections" tabindex="0"></div>
+  <section class="card tyres" id="p-tyres">
+    <h2>Tyres &amp; car</h2>
+    <div class="compound"><span id="cdot" class="cdot"></span><b id="cname">–</b><small id="cage"></small></div>
+    <div class="tyregrid" id="tyregrid"></div>
+    <div class="meters">
+      <div class="meter"><span>FUEL <b id="fuelTxt">–</b></span><div class="bar h"><i id="fuel" class="fuel"></i></div></div>
+      <div class="meter"><span>ERS <b id="ersTxt">–</b></span><div class="bar h"><i id="ers" class="ers"></i></div></div>
+    </div>
+    <div class="dmg" id="dmg"></div>
+  </section>
+  </div>
+  <div class="split" data-dir="x" role="separator" aria-orientation="vertical" aria-label="Resize columns" tabindex="0"></div>
+  <div class="col" id="c2">
+  <section class="card lap" id="p-lap">
+    <h2>Lap timing</h2>
+    <div class="pos"><span>P</span><b id="pos">–</b><small>Lap <b id="lapNum">–</b> / <b id="totalLaps">–</b></small></div>
+    <div class="cur" id="cur">0:00.000</div>
+    <div class="times">
+      <div><div class="lbl">LAST</div><div id="last">–</div></div>
+      <div><div class="lbl">BEST</div><div id="best" class="purple">–</div></div>
+    </div>
+    <div class="sectors">
+      <div id="s1"><span>S1</span><b>–</b></div>
+      <div id="s2"><span>S2</span><b>–</b></div>
+      <div id="s3"><span>S3</span><b>–</b></div>
+    </div>
+    <div class="flags"><span id="invalid" class="flag" hidden>LAP INVALID</span><span id="pit" class="flag blue" hidden>PIT</span></div>
+  </section>
+  <div class="split" data-dir="y" role="separator" aria-orientation="horizontal" aria-label="Resize sections" tabindex="0"></div>
+  <section class="card map" id="p-map">
+    <h2>Track map</h2>
+    <canvas id="map"></canvas>
+    <div class="g"><span>G-LAT <b id="gLat">0.0</b></span><span>G-LONG <b id="gLong">0.0</b></span></div>
+  </section>
+  </div>
+  <div class="split" data-dir="x" role="separator" aria-orientation="vertical" aria-label="Resize columns" tabindex="0"></div>
+  <div class="col" id="c3">
+  <section class="card standings" id="p-standings">
+    <h2>Standings <button id="gapMode" class="mode" title="Toggle gap type">INTERVAL</button></h2>
+    <div class="shead"><span>P</span><span></span><span>DRIVER</span><span>GAP</span><span>LAST</span><span>TYRE</span></div>
+    <div id="rows" class="rows"><div class="empty">No rivals yet</div></div>
+  </section>
+  </div>
+</main>
+<div id="dm" class="dm" hidden>
+  <div class="dmbox" role="dialog" aria-label="Driver telemetry">
+    <div class="dmhead">
+      <span id="dmBar" class="dmbar"></span>
+      <span class="dmpos">P<b id="dmPos">–</b></span>
+      <div class="dmwho"><b id="dmName">–</b><small id="dmTeam"></small></div>
+      <button id="dmClose" class="dmclose" aria-label="Close">✕</button>
+    </div>
+    <div id="dmNote" class="dmnote" hidden></div>
+    <div class="dmgrid">
+      <div class="dmcol">
+        <div class="dmspeed">
+          <div class="gear"><div class="lbl">GEAR</div><div id="dmGear">N</div></div>
+          <div class="speed"><div id="dmSpeed">0</div><div class="lbl">KM/H</div></div>
+          <div class="rpm"><div class="lbl">RPM</div><div id="dmRpm">0</div><div id="dmDrs" class="drs">DRS</div></div>
+        </div>
+        <div class="pedals">
+          <div class="pedal"><div class="bar"><i id="dmThr" class="thr"></i></div><span>THR</span></div>
+          <div class="pedal"><div class="bar"><i id="dmBrk" class="brk"></i></div><span>BRK</span></div>
+          <div class="steer"><div class="steerbar"><i id="dmSteer"></i></div><span>STEER</span></div>
+        </div>
+        <canvas id="dmTrace"></canvas>
+      </div>
+      <div class="dmcol">
+        <div class="compound"><span id="dmCdot" class="cdot"></span><b id="dmCname">–</b><small id="dmCage"></small></div>
+        <div class="tyregrid" id="dmTyres"></div>
+        <div class="meters">
+          <div class="meter"><span>FUEL <b id="dmFuelTxt">–</b></span><div class="bar h"><i id="dmFuel" class="fuel"></i></div></div>
+          <div class="meter"><span>ERS <b id="dmErsTxt">–</b></span><div class="bar h"><i id="dmErs" class="ers"></i></div></div>
+        </div>
+        <div class="dmlap">
+          <div><div class="lbl">CURRENT</div><b id="dmCur">–</b></div>
+          <div><div class="lbl">LAST</div><b id="dmLast">–</b></div>
+          <div><div class="lbl">S1</div><b id="dmS1">–</b></div>
+          <div><div class="lbl">S2</div><b id="dmS2">–</b></div>
+          <div><div class="lbl">LAP</div><b id="dmLap">–</b></div>
+          <div><div class="lbl">STOPS</div><b id="dmStops">–</b></div>
+        </div>
+        <div class="dmg" id="dmDmg"></div>
+      </div>
+    </div>
+  </div>
+</div>
+<div id="toast" class="toast" hidden></div>
+<div id="wait" class="wait" hidden>
+  <div class="waitbox">
+    <div class="pulse"></div>
+    <h1>Waiting for game…</h1>
+    <p class="hint">In F1 25 open <b>Settings → Telemetry Settings</b> and enter:</p>
+    <div class="setup">
+      <div><span>UDP Telemetry</span><b>On</b></div>
+      <div><span>UDP Broadcast Mode</span><b>Off</b></div>
+      <div class="ipline"><span>UDP IP Address</span><b id="waitIp">–</b></div>
+      <div><span>UDP Port</span><b id="waitPort">20777</b></div>
+      <div><span>UDP Send Rate</span><b>20Hz</b></div>
+      <div><span>UDP Format</span><b>2025</b></div>
+    </div>
+    <p class="alt" id="waitAlt"></p>
+    <p class="alt">Game on this Mac? Use <b>127.0.0.1</b>. Then start a session — this screen closes when data arrives.</p>
+  </div>
+</div>
+<script src="app.js"></script>
+<script src="layout.js"></script>
+</body>
+</html>
