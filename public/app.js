@@ -863,6 +863,11 @@ function stratMini(r) {
 
 // --- Main render ---
 function render(s) {
+  // a new session resets everything learned about the last one, before this message adds anything
+  if (s.session && s.session.sessionUID !== sessionUID) {
+    sessionUID = s.session.sessionUID;
+    track = new Map(); car = null; bestLap = 0; lapTraces.clear(); cmpTrails.clear();
+  }
   renderRecording(s);
   renderRivals(s);
   learnTrack(track, s.rivals);
@@ -876,7 +881,6 @@ function render(s) {
 
   if (s.session) {
     const se = s.session;
-    if (se.sessionUID !== sessionUID) { sessionUID = se.sessionUID; track = new Map(); car = null; bestLap = 0; lapTraces.clear(); cmpTrails.clear(); }
     $('track').textContent = se.track;
     $('weather').textContent = WEATHER[se.weather] || '—';
     $('trackTemp').textContent = se.trackTemp;
