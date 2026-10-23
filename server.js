@@ -126,6 +126,7 @@ function createDashboard(options = {}) {
     udpPort = 20777,
     demo = false,
     recDir = path.join(__dirname, 'recordings'),
+    recMaxBytes = REC_MAX_BYTES,
     broadcastMs = 33,
     log = console,
   } = options;
@@ -236,8 +237,8 @@ function createDashboard(options = {}) {
     rec.stream.write(line);
     rec.packets++;
     rec.bytes += line.length;
-    if (rec.bytes > REC_MAX_BYTES) {
-      log.warn('Recording hit the 500 MB limit, stopping');
+    if (rec.bytes > recMaxBytes) {
+      log.warn(`Recording hit the ${Math.round(recMaxBytes / 1048576)} MB limit, stopping`);
       stopRecording();
     }
   }
@@ -492,7 +493,7 @@ function createDashboard(options = {}) {
   }
 
   return {
-    state, ports, start, stop, handlePacket, broadcast, refreshState, messageFor, handleClientMessage,
+    state, ports, httpServer, start, stop, handlePacket, broadcast, refreshState, messageFor, handleClientMessage,
     buildRivals, buildDetail, startRecording, stopRecording, recordingState, applyDemoFrame, strategy,
   };
 }
