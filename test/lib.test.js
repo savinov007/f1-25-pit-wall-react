@@ -251,3 +251,12 @@ describe('UDP format 2026', () => {
     assert.equal(L.aeroLabel(null), null);
   });
 });
+
+describe('lap type tag', () => {
+  test('flying, in and out laps get a tag; garage and plain on-track do not', () => {
+    assert.deepEqual(L.lapTag(1), {label: 'FLY', cls: 'fly', title: 'Flying lap'});
+    assert.deepEqual(L.lapTag(2), {label: 'IN', cls: 'inl', title: 'In lap'});
+    assert.deepEqual(L.lapTag(3), {label: 'OUT', cls: 'out', title: 'Out lap'});
+    for (const s of [0, 4, undefined, 9]) assert.equal(L.lapTag(s), null);
+  });
+});

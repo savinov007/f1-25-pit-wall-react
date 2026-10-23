@@ -135,6 +135,17 @@ describe('telemetry from real packets', () => {
     }
   });
 
+  test('standings carry the lap type from the game', () => {
+    const d = offline();
+    feedFixture(d);
+    const r = d.refreshState().rivals;
+    assert.ok(r.every(c => Number.isInteger(c.driverStatus)), 'driver status on every car');
+    const f26 = require('./f1-2026');
+    const e = offline();
+    ['participants', 'lapData'].forEach(n => e.handlePacket(f26.build(n)));
+    assert.equal(e.refreshState().rivals[0].driverStatus, 4, 'spec-built lap data: everyone on track');
+  });
+
   test('cars without participants data still get a name', () => {
     const d = offline();
     fixturePackets().filter(p => p.buf[6] !== 4).forEach(p => d.handlePacket(p.buf));

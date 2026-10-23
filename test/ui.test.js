@@ -733,3 +733,27 @@ describe('replay mode', () => {
     assert.equal(bad.$('rp').classList.contains('placed'), false);
   });
 });
+
+describe('lap type tags', () => {
+  test('standings tag flying, in and out laps', async () => {
+    const p = await boot();
+    const s = dashboardState();
+    s.rivals.forEach(r => { r.driverStatus = 4; r.overtake = 0; r.pit = 0; r.penalty = 0; r.wrongWay = 0; });
+    s.rivals[0].driverStatus = 1;
+    s.rivals[1].driverStatus = 3;
+    s.rivals[3].driverStatus = 2;
+    s.rivals[5].driverStatus = 0;
+    p.push(s);
+    const tags = i => [...p.doc.querySelectorAll('.srow')[i].querySelectorAll('.tag')].map(t => t.textContent);
+    assert.deepEqual(tags(0), ['FLY']);
+    assert.deepEqual(tags(1), ['OUT']);
+    assert.deepEqual(tags(3), ['IN']);
+    assert.deepEqual(tags(5), [], 'garage: no tag');
+    assert.deepEqual(tags(6), [], 'plain on track: no tag');
+    assert.equal(p.doc.querySelectorAll('.srow')[0].querySelector('.tag.fly').title, 'Flying lap');
+    s.rivals[1].pit = 1;
+    p.push(s);
+    assert.deepEqual(tags(1), ['PIT', 'OUT'], 'pit tag first');
+    p.close();
+  });
+});
