@@ -228,6 +228,23 @@ describe('UDP format 2026 (F1 26)', () => {
     assert.equal(s.status.m_ersHarvestedLimitPerLap, 8500000);
   });
 
+  test('OT tag needs Boost and a finished countdown, not just the always-on flags', () => {
+    const d = offline();
+    feed2026(d);
+    const car = () => d.refreshState().rivals.find(c => c.name === 'Windman999');
+    assert.equal(car().overtake, 1, 'flags set, Boost, no countdown');
+    const t2 = f26.build('carTelemetry2');
+    t2.writeUInt16LE(150, 29 + 6); // car 0: overtake available in 150 m
+    d.handlePacket(t2);
+    assert.equal(car().overtake, 0, 'countdown still running');
+    t2.writeUInt16LE(0, 29 + 6);
+    t2.writeUInt8(0, 29 + 5); // overtakeActive off
+    d.handlePacket(t2);
+    assert.equal(car().overtake, 0);
+    const other = d.refreshState().rivals.find(c => c.name === 'DRIVER1');
+    assert.equal(other.overtake, 0, 'flags clear for other cars');
+  });
+
   test('session: format, Madrid, aero and DRS zones, reaction time', () => {
     const d = offline();
     feed2026(d);

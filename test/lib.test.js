@@ -226,18 +226,28 @@ describe('UDP format 2026', () => {
     assert.deepEqual(L.zoneRanges(undefined, 1000), []);
     assert.deepEqual(L.zoneRanges([[0.1, 0.2]], 0), [], 'no track length yet');
   });
-  test('overtake badge on 2026 cars, DRS otherwise', () => {
-    const reg = {m_2026Regulations: 1, m_overtakeActive: 0, m_overtakeAvailable: 1};
-    assert.deepEqual(L.boostBadge({m_drs: 1}, reg), {label: 'OVERTAKE', on: false, avail: true});
-    assert.deepEqual(L.boostBadge({}, {...reg, m_overtakeActive: 1}), {label: 'OVERTAKE', on: true, avail: false});
-    assert.deepEqual(L.boostBadge({m_drs: 1}, null), {label: 'DRS', on: true, avail: false});
-    assert.deepEqual(L.boostBadge({m_drs: 1}, {...reg, m_2026Regulations: 0}), {label: 'DRS', on: true, avail: false});
-    assert.deepEqual(L.boostBadge(null, null), {label: 'DRS', on: false, avail: false});
+  test('overtake badge: flags alone do not mean the car is using it', () => {
+    const reg = {m_2026Regulations: 1, m_overtakeAvailable: 1, m_overtakeActive: 1, m_overtakeActivationDistance: 0};
+    const boost = {m_ersDeployMode: 3}, medium = {m_ersDeployMode: 1};
+    assert.deepEqual(L.boostBadge({}, reg, boost), {label: 'OVERTAKE', on: true, avail: false, wait: 0});
+    // real F1 26 data: available = active = 1 for every car all race, so not using Boost means "available"
+    assert.deepEqual(L.boostBadge({}, reg, medium), {label: 'OVERTAKE', on: false, avail: true, wait: 0});
+    assert.deepEqual(L.boostBadge({}, reg, null), {label: 'OVERTAKE', on: false, avail: true, wait: 0});
+    // a countdown means it is not available yet, whatever the flags say
+    assert.deepEqual(L.boostBadge({}, {...reg, m_overtakeActivationDistance: 120}, boost), {label: 'OVERTAKE', on: false, avail: false, wait: 120});
+    assert.equal(L.boostBadge({}, {...reg, m_overtakeAvailable: 0, m_overtakeActive: 0}, medium).avail, false, 'mode not enabled');
+    assert.equal(L.boostBadge({}, {...reg, m_overtakeActive: 0}, boost).on, false, 'Boost without the active flag');
   });
-  test('active aero label', () => {
-    assert.equal(L.aeroLabel({m_activeAeroAvailable: 1, m_activeAeroMode: 1}), 'STRAIGHT');
-    assert.equal(L.aeroLabel({m_activeAeroAvailable: 1, m_activeAeroMode: 0}), 'CORNER');
-    assert.equal(L.aeroLabel({m_activeAeroAvailable: 0, m_activeAeroMode: 1}), null);
+  test('DRS badge for cars without 2026 regulations', () => {
+    assert.deepEqual(L.boostBadge({m_drs: 1}, null, null), {label: 'DRS', on: true, avail: false, wait: 0});
+    assert.deepEqual(L.boostBadge({m_drs: 1}, {m_2026Regulations: 0, m_overtakeActive: 1}, {m_ersDeployMode: 3}), {label: 'DRS', on: true, avail: false, wait: 0});
+    assert.deepEqual(L.boostBadge(null, null), {label: 'DRS', on: false, avail: false, wait: 0});
+    assert.equal(L.overtakeOn(null, null), false);
+  });
+  test('active aero label follows the mode even though the game never sets "available"', () => {
+    assert.equal(L.aeroLabel({m_2026Regulations: 1, m_activeAeroAvailable: 0, m_activeAeroMode: 1}), 'STRAIGHT');
+    assert.equal(L.aeroLabel({m_2026Regulations: 1, m_activeAeroAvailable: 0, m_activeAeroMode: 0}), 'CORNER');
+    assert.equal(L.aeroLabel({m_2026Regulations: 0, m_activeAeroMode: 1}), null, 'pre-2026 car');
     assert.equal(L.aeroLabel(null), null);
   });
 });

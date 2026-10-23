@@ -174,7 +174,7 @@ describe('tyres and car', () => {
     assert.match(p.$('fuelTxt').textContent, /^\d+\.\d KG$/);
     assert.equal(p.$('fuelLaps').textContent, '+0.80 laps');
     assert.equal(p.$('ersTxt').textContent, '50%');
-    assert.equal(p.$('ersMode').textContent, 'Hotlap · 8.5 MJ/lap', 'mode plus the 2026 harvest limit');
+    assert.match(p.$('ersMode').textContent, /^(Hotlap|Boost) · 8\.5 MJ\/lap$/, 'mode plus the 2026 harvest limit');
     assert.ok(Math.abs(parseFloat(p.$('ers').style.width) - 50) < 1e-6);
     p.close();
   });
@@ -504,16 +504,34 @@ describe('F1 26 (UDP format 2026)', () => {
   });
   test('overtake mode replaces DRS, with active aero mode', async () => {
     const p = await boot();
-    p.push(dashboardState({telemetry2: t2({m_overtakeActive: 1, m_activeAeroMode: 1})}));
+    const base = dashboardState();
+    const status = mode => ({...base.status, m_ersDeployMode: mode});
+    // flags set, Boost in use: on
+    p.push({...base, status: status(3), telemetry2: t2({m_overtakeAvailable: 1, m_overtakeActive: 1, m_activeAeroMode: 1})});
     assert.equal(p.$('drs').textContent, 'OVERTAKE');
     assert.equal(p.$('drs').classList.contains('on'), true);
     assert.equal(p.$('aero').hidden, false);
     assert.equal(p.$('aero').textContent, 'STRAIGHT');
     assert.equal(p.$('aero').classList.contains('on'), true);
-    p.push(dashboardState({telemetry2: t2({m_overtakeAvailable: 1})}));
-    assert.equal(p.$('drs').classList.contains('avail'), true, 'available but not active');
+    // the game sets available = active for the whole race: without Boost that is only "available", never "on"
+    p.push({...base, status: status(1), telemetry2: t2({m_overtakeAvailable: 1, m_overtakeActive: 1})});
+    assert.equal(p.$('drs').classList.contains('on'), false, 'regression: was always lit');
+    assert.equal(p.$('drs').classList.contains('avail'), true);
     assert.equal(p.$('aero').textContent, 'CORNER');
-    p.push(dashboardState({telemetry2: t2({m_activeAeroAvailable: 0})}));
+    assert.equal(p.$('aero').classList.contains('on'), false);
+    // countdown to availability
+    p.push({...base, status: status(3), telemetry2: t2({m_overtakeAvailable: 1, m_overtakeActive: 1, m_overtakeActivationDistance: 150})});
+    assert.equal(p.$('drs').classList.contains('on'), false);
+    assert.equal(p.$('drs').classList.contains('avail'), false);
+    assert.equal(p.$('drs').title, 'Overtake mode available in 150 m');
+    // mode not enabled
+    p.push({...base, status: status(1), telemetry2: t2({})});
+    assert.equal(p.$('drs').classList.contains('avail'), false);
+    assert.equal(p.$('drs').title, '');
+    // aero does not need m_activeAeroAvailable
+    p.push({...base, telemetry2: t2({m_activeAeroAvailable: 0, m_activeAeroMode: 1})});
+    assert.equal(p.$('aero').textContent, 'STRAIGHT');
+    p.push({...base, telemetry2: t2({m_2026Regulations: 0})});
     assert.equal(p.$('aero').hidden, true);
     p.push(dashboardState({telemetry2: null}));
     assert.equal(p.$('aero').hidden, true);
