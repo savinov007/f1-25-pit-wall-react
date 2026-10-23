@@ -69,6 +69,8 @@ class StrategyTracker {
         c = this.newCar(l, status);
         this.cars.set(i, c);
       }
+      // close the finished lap first: this packet's flags (invalid, in pit) belong to the lap just started
+      if (l.m_currentLapNum > c.lap) this.completeLap(c, l, lapArr, wear);
 
       // new stint: a completed stop, or the tyre age went backwards (fresh set)
       const age = status ? status.m_tyresAgeLaps : null;
@@ -83,8 +85,6 @@ class StrategyTracker {
       if (l.m_currentLapInvalid) c.invalidThisLap = true;
       const frac = trackLength > 0 && l.m_lapDistance >= 0 ? Math.min(1, l.m_lapDistance / trackLength) : 0;
       c.live = {wear, x: l.m_currentLapNum - 1 + frac};
-
-      if (l.m_currentLapNum > c.lap) this.completeLap(c, l, lapArr, wear);
     });
   }
 
