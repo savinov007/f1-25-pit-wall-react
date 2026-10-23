@@ -154,6 +154,20 @@ export interface PacketSessionData {
   m_weekendStructure: number[];
   m_sector2LapDistanceStart: number;
   m_sector3LapDistanceStart: number;
+  // UDP format 2026
+  m_activeAeroTrackStatus?: number; // 0 = full, 1 = partial
+  m_numActiveAeroZonesFull?: number;
+  m_activeAeroZonesFull?: LapZone[];
+  m_numActiveAeroZonesPartial?: number;
+  m_activeAeroZonesPartial?: LapZone[];
+  m_numDRSZones?: number;
+  m_drsZones?: LapZone[];
+  m_startReactionTime?: number; // seconds, 0 if assisted start
+  m_antiLockBrakesAssist?: number;
+  m_tractionControlAssist?: number;
+  m_dynamicRacingLineHiVis?: number;
+  m_dynamicRacingLineColourBlind?: number;
+  m_recurringRewindPrompt?: number;
 }
 
 export interface LapData {
@@ -352,6 +366,7 @@ export interface CarStatusData {
   m_ersDeployMode: number;
   m_ersHarvestedThisLapMGUK: number;
   m_ersHarvestedThisLapMGUH: number;
+  m_ersHarvestedLimitPerLap?: number; // UDP format 2026
   m_ersDeployedThisLap: number;
   m_networkPaused: number;
 }
@@ -549,4 +564,27 @@ export interface PacketLapPositionsData {
   m_numLaps: number;
   m_lapStart: number;
   m_positionForVehicleIdx: number[][];
+}
+
+// --- UDP format 2026 (F1 25: 2026 Season Pack) ---
+
+export interface CarTelemetry2Data {
+  m_activeAeroMode: number; // 0 = corner mode, 1 = straight mode
+  m_activeAeroAvailable: number;
+  m_activeAeroActivationDistance: number; // 0 = not available, else available in [x] metres
+  m_overtakeAvailable: number;
+  m_overtakeActive: number;
+  m_overtakeActivationDistance: number; // 0 = not available, else available in [x] metres
+  m_2026Regulations: number; // 1 = car conforms to the 2026 regulations
+  m_drivingWrongWay: number;
+}
+
+export interface PacketCarTelemetry2Data {
+  m_header: PacketHeader;
+  m_carTelemetry2Data: CarTelemetry2Data[];
+}
+
+export interface LapZone {
+  m_zoneStart: number; // fraction (0..1) of the lap
+  m_zoneEnd: number;
 }

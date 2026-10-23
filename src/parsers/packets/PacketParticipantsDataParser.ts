@@ -1,3 +1,4 @@
+import {numCars} from './numCars';
 import {F1Parser} from '../F1Parser';
 import {PacketHeaderParser} from './PacketHeaderParser';
 import {ParticipantDataParser} from './ParticipantDataParser';
@@ -16,7 +17,7 @@ export class PacketParticipantsDataParser extends F1Parser {
     this.uint8('m_numActiveCars');
 
     this.array('m_participants', {
-      length: 22,
+      length: numCars(packetFormat),
       type: new ParticipantDataParser(packetFormat),
     });
 

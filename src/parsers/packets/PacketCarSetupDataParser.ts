@@ -1,3 +1,4 @@
+import {numCars} from './numCars';
 import {F1Parser} from '../F1Parser';
 import {CarSetupDataParser} from './CarSetupDataParser';
 import {PacketHeaderParser} from './PacketHeaderParser';
@@ -14,11 +15,11 @@ export class PacketCarSetupDataParser extends F1Parser {
         type: new PacketHeaderParser(packetFormat),
       })
       .array('m_carSetups', {
-        length: 22,
+        length: numCars(packetFormat),
         type: new CarSetupDataParser(packetFormat),
       });
 
-    if (packetFormat === 2024 || packetFormat === 2025) {
+    if (packetFormat >= 2024) {
       this.floatle('m_nextFrontWingValue');
     }
 

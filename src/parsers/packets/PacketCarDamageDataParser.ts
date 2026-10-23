@@ -1,3 +1,4 @@
+import {numCars} from './numCars';
 import {F1Parser} from '../F1Parser';
 import {CarDamageDataParser} from './CarDamageDataParser';
 import {PacketHeaderParser} from './PacketHeaderParser';
@@ -14,7 +15,7 @@ export class PacketCarDamageDataParser extends F1Parser {
         type: new PacketHeaderParser(packetFormat),
       })
       .array('m_carDamageData', {
-        length: 22,
+        length: numCars(packetFormat),
         type: new CarDamageDataParser(packetFormat),
       });
 

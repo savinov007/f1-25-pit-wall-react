@@ -18,7 +18,7 @@ export class CarDamageDataParser extends F1Parser {
       });
     
       // 2025 m_tyreBlisters[4]
-    if (packetFormat === 2025) {
+    if (packetFormat >= 2025) {
       this.array('m_tyreBlisters', {
         length: 4,
         type: new Parser().uint8(''),

@@ -161,6 +161,20 @@ export class CollisionParser extends F1Parser {
   }
 }
 
+export class CollisionParser2026 extends F1Parser {
+  constructor() {
+    super();
+    this.endianess('little').uint8('vehicle1Idx').uint8('vehicle2Idx').uint8('severity');
+  }
+}
+
+export class PartialModeEnabledParser extends F1Parser {
+  constructor() {
+    super();
+    this.endianess('little').uint8('reason');
+  }
+}
+
 export class PacketEventDataParser extends F1Parser {
   data: PacketEventData;
 
@@ -187,6 +201,9 @@ export class PacketEventDataParser extends F1Parser {
 
     if (packetFormat === 2025) {
       this.unpack2025Format(buffer, packetFormat);
+    }
+    if (packetFormat >= 2026) {
+      this.unpack2026Format(buffer, packetFormat);
     }
 
     this.data = this.fromBuffer(buffer);
@@ -325,6 +342,18 @@ export class PacketEventDataParser extends F1Parser {
       this.nest('m_eventDetails', {type: new SafetyCarParser()});
     } else if (eventStringCode === EVENT_CODES.Collision) {
       this.nest('m_eventDetails', {type: new CollisionParser()});
+    }
+  };
+
+  // 2026: collisions carry a severity; race control can enable partial (active aero) mode
+  unpack2026Format = (buffer: Buffer, packetFormat: number) => {
+    const eventStringCode = this.getEventStringCode(buffer, packetFormat);
+    if (eventStringCode === EVENT_CODES.Collision) {
+      this.nest('m_eventDetails', {type: new CollisionParser2026()});
+    } else if (eventStringCode === EVENT_CODES.PartialModeEnabled) {
+      this.nest('m_eventDetails', {type: new PartialModeEnabledParser()});
+    } else {
+      this.unpack2025Format(buffer, packetFormat);
     }
   };
 

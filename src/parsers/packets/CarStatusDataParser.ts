@@ -20,7 +20,7 @@ export class CarStatusDataParser extends F1Parser {
       .uint8('m_visualTyreCompound')
       .uint8('m_tyresAgeLaps');
 
-    if (packetFormat === 2023 || packetFormat === 2024 || packetFormat === 2025) {
+    if (packetFormat >= 2023) {
       this.int8('m_vehicleFiaFlags')
         .floatle('m_enginePowerICE')
         .floatle('m_enginePowerMGUK');
@@ -31,8 +31,9 @@ export class CarStatusDataParser extends F1Parser {
     this.floatle('m_ersStoreEnergy')
       .uint8('m_ersDeployMode')
       .floatle('m_ersHarvestedThisLapMGUK')
-      .floatle('m_ersHarvestedThisLapMGUH')
-      .floatle('m_ersDeployedThisLap')
+      .floatle('m_ersHarvestedThisLapMGUH');
+    if (packetFormat >= 2026) this.floatle('m_ersHarvestedLimitPerLap');
+    this.floatle('m_ersDeployedThisLap')
       .uint8('m_networkPaused');
   }
 }

@@ -1,3 +1,4 @@
+import {numCars} from './numCars';
 import {Parser} from 'binary-parser';
 import {F1Parser} from '../F1Parser';
 import {CarMotionDataParser} from './CarMotionDataParser';
@@ -15,8 +16,8 @@ export class PacketMotionDataParser extends F1Parser {
         type: new PacketHeaderParser(packetFormat),
       })
       .array('m_carMotionData', {
-        length: 22,
-        type: new CarMotionDataParser(),
+        length: numCars(packetFormat),
+        type: new CarMotionDataParser(packetFormat),
       });
 
     if (packetFormat === 2022) {

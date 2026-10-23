@@ -13,7 +13,7 @@ export class FinalClassificationDataParser extends F1Parser {
       .uint8('m_resultStatus');
 
       // 2025 m_resultReason
-      if (packetFormat === 2025) {
+      if (packetFormat >= 2025) {
         this.uint8('m_resultReason');
       }
 

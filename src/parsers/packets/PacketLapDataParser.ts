@@ -1,3 +1,4 @@
+import {numCars} from './numCars';
 import {F1Parser} from '../F1Parser';
 import {LapDataParser} from './LapDataParser';
 import {PacketHeaderParser} from './PacketHeaderParser';
@@ -14,7 +15,7 @@ export class PacketLapDataParser extends F1Parser {
         type: new PacketHeaderParser(packetFormat),
       })
       .array('m_lapData', {
-        length: 22,
+        length: numCars(packetFormat),
         type: new LapDataParser(packetFormat),
       });
 

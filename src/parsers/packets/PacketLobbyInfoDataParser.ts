@@ -1,3 +1,4 @@
+import {numCars} from './numCars';
 import {F1Parser} from '../F1Parser';
 import {LobbyInfoDataParser} from './LobbyInfoDataParser';
 import {PacketHeaderParser} from './PacketHeaderParser';
@@ -15,7 +16,7 @@ export class PacketLobbyInfoDataParser extends F1Parser {
       })
       .uint8('m_numPlayers')
       .array('m_lobbyPlayers', {
-        length: 22,
+        length: numCars(packetFormat),
         type: new LobbyInfoDataParser(packetFormat),
       });
 

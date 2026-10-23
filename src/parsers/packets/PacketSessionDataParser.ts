@@ -43,7 +43,7 @@ export class PacketSessionDataParser extends F1Parser {
       });
     }
 
-    if (packetFormat === 2024 || packetFormat === 2025) {
+    if (packetFormat >= 2024) {
       this.array('m_weatherForecastSamples', {
         length: 64,
         type: new WeatherForecastSampleParser(),
@@ -82,7 +82,7 @@ export class PacketSessionDataParser extends F1Parser {
         .uint8('m_numRedFlagPeriods');
     }
 
-    if (packetFormat === 2024 || packetFormat === 2025) {
+    if (packetFormat >= 2024) {
       this.uint8('m_speedUnitsLeadPlayer')
         .uint8('m_temperatureUnitsLeadPlayer')
         .uint8('m_speedUnitsSecondaryPlayer')
@@ -121,6 +121,24 @@ export class PacketSessionDataParser extends F1Parser {
         })
         .floatle('m_sector2LapDistanceStart')
         .floatle('m_sector3LapDistanceStart');
+    }
+
+    // 2026: active aero and DRS zones (lap fractions), start reaction time, new assist settings
+    if (packetFormat >= 2026) {
+      const zone = new Parser().floatle('m_zoneStart').floatle('m_zoneEnd');
+      this.uint8('m_activeAeroTrackStatus')
+        .uint8('m_numActiveAeroZonesFull')
+        .array('m_activeAeroZonesFull', {length: 8, type: zone})
+        .uint8('m_numActiveAeroZonesPartial')
+        .array('m_activeAeroZonesPartial', {length: 8, type: zone})
+        .uint8('m_numDRSZones')
+        .array('m_drsZones', {length: 4, type: zone})
+        .floatle('m_startReactionTime')
+        .uint8('m_antiLockBrakesAssist')
+        .uint8('m_tractionControlAssist')
+        .uint8('m_dynamicRacingLineHiVis')
+        .uint8('m_dynamicRacingLineColourBlind')
+        .uint8('m_recurringRewindPrompt');
     }
 
     this.data = this.fromBuffer(buffer);

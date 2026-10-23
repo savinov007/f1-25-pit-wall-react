@@ -2,7 +2,7 @@ import {Parser} from 'binary-parser';
 import {F1Parser} from '../F1Parser';
 
 export class CarTelemetryDataParser extends F1Parser {
-  constructor() {
+  constructor(packetFormat = 2025) {
     super();
     this.uint16le('m_speed')
       .floatle('m_throttle')
@@ -25,9 +25,11 @@ export class CarTelemetryDataParser extends F1Parser {
       .array('m_tyresInnerTemperature', {
         length: 4,
         type: new Parser().uint8(''),
-      })
-      .uint16le('m_engineTemperature')
-      .array('m_tyresPressure', {
+      });
+    // 2026 shrank engine temperature to uint8
+    if (packetFormat >= 2026) this.uint8('m_engineTemperature');
+    else this.uint16le('m_engineTemperature');
+    this.array('m_tyresPressure', {
         length: 4,
         type: new Parser().floatle(''),
       })

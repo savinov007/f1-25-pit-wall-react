@@ -42,5 +42,6 @@ export const TRACKS: Track[] = [
   {name: '38', lat: 0, lon: 0}, 
   {name: 'Silverstone Reverse', lat: 52.06922421, lon: -1.02226861}, 
   {name: 'Austria Reverse', lat: 47.22031495, lon: 14.76673126}, 
-  {name: 'Zandvoort Reverse', lat: 52.388851, lon: 4.5407599}
+  {name: 'Zandvoort Reverse', lat: 52.388851, lon: 4.5407599},
+  {name: 'Madrid', lat: 40.4636, lon: -3.6153},
 ];

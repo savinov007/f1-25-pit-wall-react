@@ -1,3 +1,4 @@
+import {numCars} from './numCars';
 import {F1Parser} from '../F1Parser';
 import {CarTelemetryDataParser} from './CarTelemetryDataParser';
 import {PacketHeaderParser} from './PacketHeaderParser';
@@ -14,8 +15,8 @@ export class PacketCarTelemetryDataParser extends F1Parser {
         type: new PacketHeaderParser(packetFormat),
       })
       .array('m_carTelemetryData', {
-        length: 22,
-        type: new CarTelemetryDataParser(),
+        length: numCars(packetFormat),
+        type: new CarTelemetryDataParser(packetFormat),
       });
 
     this.uint8('m_mfdPanelIndex')

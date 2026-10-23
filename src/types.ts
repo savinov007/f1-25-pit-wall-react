@@ -15,6 +15,7 @@ import {
   PacketMotionExDataParser,
   PacketTimeTrialDataParser,
   PacketLapPositionsDataParser,
+  PacketCarTelemetry2DataParser,
 } from './parsers/packets';
 
 export interface Options {
@@ -40,6 +41,7 @@ export interface ParsedMessage {
   packetID: string;
   packetData:
     | PacketLapPositionsDataParser
+    | PacketCarTelemetry2DataParser
     | PacketTimeTrialDataParser
     | PacketMotionExDataParser
     | PacketTyreSetsDataParser

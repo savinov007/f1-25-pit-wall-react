@@ -22,4 +22,8 @@ export const EVENT_CODES: {[index: string]: EventCode} = {
   Overtake: 'OVTK',
   SafetyCar: 'SCAR',
   Collision: 'COLL',
+  PartialModeEnabled: 'PMEN',
+  PartialModeDisabled: 'PMDI',
+  OvertakeEnabled: 'OVEN',
+  OvertakeDisabled: 'OVDI',
 };

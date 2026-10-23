@@ -14,15 +14,15 @@ export class PacketTimeTrialDataParser extends F1Parser {
     });
 
     this.nest('m_playerSessionBestDataSet', {
-      type: new TimeTrialDataSetParser(),
+      type: new TimeTrialDataSetParser(packetFormat),
     });
 
     this.nest('m_personalBestDataSet', {
-      type: new TimeTrialDataSetParser(),
+      type: new TimeTrialDataSetParser(packetFormat),
     });
 
     this.nest('m_rivalDataSet', {
-      type: new TimeTrialDataSetParser(),
+      type: new TimeTrialDataSetParser(packetFormat),
     });
 
     this.data = this.fromBuffer(buffer);

@@ -15,4 +15,5 @@ export const PACKETS = {
   motionEx: 'motionEx',
   timeTrial: 'timeTrial',
   lapPositions: 'lapPositions',
+  carTelemetry2: 'carTelemetry2',
 };

@@ -1,12 +1,12 @@
 import {F1Parser} from '../F1Parser';
 
 export class TimeTrialDataSetParser extends F1Parser {
-  constructor() {
+  constructor(packetFormat = 2025) {
     super();
-    this.endianess('little')
-      .uint8('m_carIdx')
-      .uint8('m_teamId')
-      .uint32('m_lapTimeInMS')
+    this.endianess('little').uint8('m_carIdx');
+    if (packetFormat >= 2026) this.uint16le('m_teamId');
+    else this.uint8('m_teamId');
+    this.uint32('m_lapTimeInMS')
       .uint32('m_sector1TimeInMS')
       .uint32('m_sector2TimeInMS')
       .uint32('m_sector3TimeInMS')

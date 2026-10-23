@@ -21,7 +21,7 @@ export class CarSetupDataParser extends F1Parser {
       .uint8('m_brakePressure')
       .uint8('m_brakeBias');
 
-    if (packetFormat === 2024 || packetFormat === 2025) {
+    if (packetFormat >= 2024) {
       this.uint8('m_engineBraking');
     }
 

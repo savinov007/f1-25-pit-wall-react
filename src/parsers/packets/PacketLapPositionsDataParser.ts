@@ -1,3 +1,4 @@
+import {numCars} from './numCars';
 import {F1Parser} from '../F1Parser';
 import {PacketHeaderParser} from './PacketHeaderParser';
 import {PacketLapPositionsData} from './types';
@@ -17,7 +18,7 @@ export class PacketLapPositionsDataParser extends F1Parser {
       .uint8('m_lapStart')
       .array('m_positionForVehicleIdx', {
         length: 50, // cs_maxNumLapsInLapPositionsHistoryPacket
-        type: new F1Parser().array('', { length: 22, type: new F1Parser().uint8('') }), // 22 cars
+        type: new F1Parser().array('', {length: numCars(packetFormat), type: new F1Parser().uint8('')}),
       });
     this.data = this.fromBuffer(buffer);
   }
