@@ -479,7 +479,10 @@ function createDashboard(options = {}) {
     return ports;
   }
 
+  let stopped = false;
   async function stop() {
+    if (stopped) return;
+    stopped = true;
     timers.splice(0).forEach(clearInterval);
     await stopRecording();
     if (client && client.socket) await new Promise(resolve => client.socket.close(resolve));
