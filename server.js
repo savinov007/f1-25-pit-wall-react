@@ -38,6 +38,11 @@ const state = {
 };
 
 // Latest full per-car arrays, merged into state.rivals.
+// Best lap per car idx: authoritative from sessionHistory packets, else the fastest last lap seen so far.
+const bestLaps = {};
+const observedBest = {};
+let bestSessionUID = null;
+
 const raw = {lap: null, status: null, parts: null, tel: null, dmg: null, mot: null, playerIdx: 0};
 
 const minutesToMs = (msPart, minutes) => (msPart || 0) + (minutes || 0) * 60000;
@@ -56,10 +61,13 @@ function buildRivals() {
   if (!raw.lap) return [];
   const rivals = [];
   raw.lap.forEach((l, i) => {
+    const last = l.m_lastLapTimeInMS;
+    if (last > 0 && (!observedBest[i] || last < observedBest[i])) observedBest[i] = last;
     // resultStatus 0 = invalid, 1 = inactive: slot isn't a car in this session
     if (!l.m_carPosition || l.m_resultStatus < 2) return;
     const part = raw.parts && raw.parts[i];
     const status = raw.status && raw.status[i];
+    const mot = raw.mot && raw.mot[i];
     const team = part && teamFor(part.m_teamId);
     rivals.push({
       idx: i,
@@ -71,8 +79,11 @@ function buildRivals() {
       telemetryPublic: part ? part.m_yourTelemetry === 1 : false,
       team: team ? team.name : '',
       color: team ? team.color : '#888888',
+      x: mot ? mot.m_worldPositionX : undefined,
+      z: mot ? mot.m_worldPositionZ : undefined,
       lapNum: l.m_currentLapNum,
       last: l.m_lastLapTimeInMS,
+      best: bestLaps[i] || observedBest[i] || 0,
       gapFront: l.m_deltaToCarInFrontMSPart !== undefined ? minutesToMs(l.m_deltaToCarInFrontMSPart, l.m_deltaToCarInFrontMinutesPart) : l.m_deltaToCarInFrontInMS || 0,
       gapLeader: l.m_deltaToRaceLeaderMSPart !== undefined ? minutesToMs(l.m_deltaToRaceLeaderMSPart, l.m_deltaToRaceLeaderMinutesPart) : l.m_deltaToRaceLeaderInMS || 0,
       pit: l.m_pitStatus,
@@ -248,6 +259,11 @@ function startUdp() {
     raw.status = p.m_carStatusData;
     onPlayer(p, 'status', (pk, i) => ({...pk.m_carStatusData[i]}));
   });
+  client.on(PACKETS.sessionHistory, p => {
+    const lapNum = p.m_bestLapTimeLapNum;
+    const lap = lapNum > 0 ? p.m_lapHistoryData[lapNum - 1] : null;
+    if (lap && lap.m_lapTimeInMS > 0) bestLaps[p.m_carIdx] = lap.m_lapTimeInMS;
+  });
   client.on(PACKETS.participants, p => {
     raw.parts = p.m_participants;
     packetCount++;
@@ -265,16 +281,24 @@ function startUdp() {
     });
   });
   client.on(PACKETS.session, p =>
-    onPlayer(p, 'session', pk => ({
-      trackId: pk.m_trackId,
-      track: TRACKS[pk.m_trackId] ? TRACKS[pk.m_trackId].name : 'Unknown',
-      totalLaps: pk.m_totalLaps,
-      weather: pk.m_weather,
-      trackTemp: pk.m_trackTemperature,
-      airTemp: pk.m_airTemperature,
-      sessionType: pk.m_sessionType,
-      sessionUID: String(pk.m_header.m_sessionUID),
-    }))
+    onPlayer(p, 'session', pk => {
+      const uid = String(pk.m_header.m_sessionUID);
+      if (bestSessionUID !== null && uid !== bestSessionUID) {
+        for (const k of Object.keys(bestLaps)) delete bestLaps[k];
+        for (const k of Object.keys(observedBest)) delete observedBest[k];
+      }
+      bestSessionUID = uid;
+      return {
+        trackId: pk.m_trackId,
+        track: TRACKS[pk.m_trackId] ? TRACKS[pk.m_trackId].name : 'Unknown',
+        totalLaps: pk.m_totalLaps,
+        weather: pk.m_weather,
+        trackTemp: pk.m_trackTemperature,
+        airTemp: pk.m_airTemperature,
+        sessionType: pk.m_sessionType,
+        sessionUID: uid,
+      };
+    })
   );
   client.start();
   console.log(`Listening for F1 UDP telemetry on port ${UDP_PORT}`);
@@ -292,14 +316,20 @@ const DEMO_DRIVERS = [
   ['ALBON', 'Williams', '#64C4FF'], ['TSUNODA', 'Red Bull Racing', '#3671C6'], ['HULKENBERG', 'Sauber', '#52E252'],
 ];
 
+function demoPos(a) {
+  return {x: Math.cos(a) * 400 + Math.cos(a * 2) * 60, z: Math.sin(a) * 250 + Math.sin(a * 3) * 40};
+}
+
 function demoRivals(t, lapNum) {
+  const lapAngle = ((t % 30000) / 30000) * Math.PI * 2;
   const you = {name: 'YOU', team: 'Demo', color: '#e10600', num: 99};
   const cars = [...DEMO_DRIVERS.slice(0, 2), you, ...DEMO_DRIVERS.slice(2)];
   return cars.map((c, i) => ({
     idx: i, pos: i + 1, name: c.name || c[0], num: c.num || 10 + i, team: c.team || c[1], color: c.color || c[2],
-    lapNum, last: 90000 + i * 180, gapFront: i ? 400 + ((i * 377 + t / 7) % 2200) : 0, gapLeader: i ? i * 1300 + ((t / 9) % 700) : 0,
+    lapNum, last: 90000 + i * 180, best: 89000 + ((i * 37) % 9) * 150, gapFront: i ? 400 + ((i * 377 + t / 7) % 2200) : 0, gapLeader: i ? i * 1300 + ((t / 9) % 700) : 0,
     pit: i === 7 ? 1 : 0, stops: i % 3 === 0 ? 1 : 0, penalty: i === 5 ? 5 : 0, result: 2,
     compound: [16, 17, 18][i % 3], age: lapNum + (i % 4), player: c === you,
+    ...demoPos(lapAngle + (2 - i) * 0.18),
   }));
 }
 
@@ -338,10 +368,14 @@ function startDemo() {
     state.status = {
       m_fuelInTank: 60 - t / 4000, m_fuelCapacity: 110, m_visualTyreCompound: 17, m_actualTyreCompound: 17, m_tyresAgeLaps: lapNum,
       m_ersStoreEnergy: 4000000 * (0.5 + 0.5 * Math.sin(a)), m_ersDeployMode: 2, m_maxRPM: 13000,
+      m_fuelRemainingLaps: 1.4 - lapNum * 0.3,
     };
+    // spread of wear and damage so every colour band is visible in demo mode
+    const wearRamp = base => Math.min(100, base + lapNum * 4 + (t % LAP_MS) / LAP_MS * 4);
     state.damage = {
-      m_tyresWear: [5 + lapNum * 2, 5 + lapNum * 2, 4 + lapNum * 2, 4 + lapNum * 2],
-      m_frontLeftWingDamage: 0, m_frontRightWingDamage: 0, m_rearWingDamage: 0, m_floorDamage: 0, m_engineDamage: 0, m_gearBoxDamage: 0,
+      m_tyresWear: [wearRamp(14), wearRamp(18), wearRamp(33), wearRamp(56)],
+      m_frontLeftWingDamage: 12, m_frontRightWingDamage: 0, m_rearWingDamage: 0, m_floorDamage: 4,
+      m_diffuserDamage: 0, m_sidepodDamage: 27, m_engineDamage: 3, m_gearBoxDamage: 0,
     };
     state.motion = {x: Math.cos(a) * 400 + Math.cos(a * 2) * 60, z: Math.sin(a) * 250 + Math.sin(a * 3) * 40, gLat: Math.sin(a * 3) * 3, gLong: brake ? -3 : 1};
     state.pps = 20;
