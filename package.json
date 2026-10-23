@@ -44,7 +44,7 @@
     "compile": "tsc -p .",
     "fix": "gts fix",
     "test": "node --test \"test/**/*.test.js\"",
-    "prepare": "npm run compile",
+    "prepare": "npm run compile && husky install",
     "pretest": "npm run compile",
     "test:coverage": "node --test --experimental-test-coverage --test-coverage-exclude=\"test/**\" --test-coverage-exclude=\"build/**\" --test-coverage-exclude=\"node_modules/**\" \"test/**/*.test.js\""
   },
