@@ -443,22 +443,19 @@ canvas { display: block; width: 100%; }
 .ccstats dd { margin: 2px 0 0; font: 700 clamp(14px, 2.2vh, 19px)/1.2 var(--f-mono); font-variant-numeric: tabular-nums; }
 .ccstats dd.purple { color: var(--purple); }
 .ccvs.ahead { color: var(--green); } .ccvs.behind { color: var(--red-hi); }
-.cctyrehead { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
-.ccwear { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
-.ccwear > div { display: flex; align-items: baseline; gap: 8px; padding: 6px 10px; background: var(--inset); border: 1px solid var(--line); border-left-width: 3px; border-radius: 7px; }
-.ccwear span { font: 700 11px/1 var(--f-display); letter-spacing: .14em; color: var(--dim); }
-.ccwear b { font: 800 clamp(20px, 3.2vh, 30px)/1 var(--f-display); font-variant-numeric: tabular-nums; }
-.ccwear small { margin-left: auto; font: 500 11px/1 var(--f-mono); }
-.ccmeters { display: grid; gap: 8px; }
-.ccdmg { display: flex; flex-wrap: wrap; gap: 5px; }
-.ccdmg span { font: 700 11px/1 var(--f-display); letter-spacing: .08em; text-transform: uppercase; padding: 5px 8px; border-radius: 5px; border: 1px solid var(--line); color: var(--dim); }
-.ccdmg span b { font-family: var(--f-mono); font-weight: 500; margin-left: 4px; }
-.ccdmg .ok { color: var(--green); border-color: rgba(31, 209, 102, .35); }
-.ccdmg .l1 { color: var(--amber); border-color: rgba(255, 176, 32, .5); }
-.ccdmg .l2 { color: var(--orange); border-color: rgba(255, 122, 26, .6); background: rgba(255, 122, 26, .08); }
-.ccdmg .l3 { color: #fff; border-color: var(--red-hi); background: rgba(255, 45, 31, .18); }
 @media (max-width: 900px) {
   .cmp { overflow: auto; grid-template-rows: auto auto auto; }
   .cmpbar { flex-wrap: wrap; } .cmppick { order: 3; flex-basis: 100%; }
   .cmpcols { grid-template-columns: 1fr; overflow: visible; }
 }
+
+/* compare columns reuse the main dashboard's car diagram, meters and damage tiles */
+.cc { container-type: inline-size; }
+.cctyrehead { display: flex; align-items: center; justify-content: space-between; }
+.cc .tyrebox { height: clamp(210px, 30vh, 300px); }
+.cc .ccmeters { margin-top: 0; }
+@container (max-width: 330px) { .cc .ccmeters { grid-template-columns: 1fr; gap: 8px; } }
+@container (max-width: 560px) { .cc .dmg { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@container (max-width: 300px) { .cc .ti-stats { display: none; } }
+.cc .dc b { font-size: 22px; }
+

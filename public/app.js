@@ -556,23 +556,20 @@ function buildCompareCols() {
         <div><dt>BEST LAP</dt><dd class="ccbest">–</dd></div>
         <div><dt>LAP · STOPS</dt><dd class="cclap">–</dd></div>
       </dl>
-      <div class="cctyres">
-        <div class="cctyrehead"><span class="lbl">TYRES</span><span class="compound"><span class="cdot cccdot"></span><b class="cccname">–</b><small class="cccage"></small></span></div>
-        <div class="ccwear">${TYRES.map(ty => `<div><span>${ty.n}</span><b>–</b><small>–</small></div>`).join('')}</div>
-      </div>
-      <div class="ccmeters">
+      <div class="cctyrehead"><span class="lbl">TYRES &amp; CAR</span><span class="compound"><span class="cdot cccdot"></span><b class="cccname">–</b><small class="cccage"></small></span></div>
+      <div class="tyrebox cctyrebox"></div>
+      <div class="meters ccmeters">
         <div class="meter"><div class="mhead"><span>FUEL</span><b class="ccfuel">–</b><small class="ccfuell"></small></div><div class="seg"><i class="fuel ccfuelb"></i></div></div>
         <div class="meter"><div class="mhead"><span>ERS</span><b class="ccers">–</b><small class="ccersm"></small></div><div class="seg"><i class="ers ccersb"></i></div></div>
       </div>
-      <div class="ccdmg"></div>`;
+      <div class="dmg ccdmgbox"></div>`;
     box.appendChild(el);
     const q = c => el.querySelector('.' + c);
     const refs = {};
     for (const c of ['ccpos', 'ccname', 'ccsub', 'ccteam', 'ccnote', 'ccgear', 'ccspd', 'ccrpm', 'ccdrs', 'ccthr', 'ccthrv', 'ccbrk', 'ccbrkv',
       'ccgap', 'ccvsl', 'ccvs', 'cccur', 'cclast', 'ccbest', 'cclap', 'cccdot', 'cccname', 'cccage', 'ccfuel', 'ccfuell', 'ccfuelb',
-      'ccers', 'ccersm', 'ccersb', 'ccdmg']) refs[c] = q(c);
-    refs.wear = [...el.querySelectorAll('.ccwear > div')];
-    return {idx, el, refs};
+      'ccers', 'ccersm', 'ccersb']) refs[c] = q(c);
+    return {idx, el, refs, car: createCar(q('cctyrebox')), damage: createDamage(q('ccdmgbox'))};
   });
 }
 
@@ -655,25 +652,8 @@ function renderCompare(s) {
       f.ccers.textContent = Math.round(ersPct) + '%';
       f.ccersm.textContent = ERS_MODES[st.m_ersDeployMode] || '';
     }
-    TYRES.forEach((ty, j) => {
-      const cell = f.wear[j];
-      const w = d.damage && d.damage.m_tyresWear ? Math.max(0, Math.min(100, d.damage.m_tyresWear[ty.i])) : null;
-      const b = cell.querySelector('b');
-      b.textContent = w == null ? '–' : Math.round(w) + '%';
-      b.style.color = w == null ? '' : wearColor(w);
-      const temp = t.m_tyresSurfaceTemperature[ty.i];
-      const small = cell.querySelector('small');
-      small.textContent = Math.round(temp) + '°';
-      small.style.color = tempColor(temp);
-      cell.style.borderColor = w == null ? '' : wearColor(w);
-    });
-    if (d.damage) {
-      const hurt = DMG_KEYS.map(([key, label]) => [label, Math.round(d.damage[key] || 0)]).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
-      const html = hurt.length
-        ? hurt.map(([label, v]) => `<span class="l${dmgLevel(v)}">${label} <b>${v}%</b></span>`).join('')
-        : '<span class="ok">NO DAMAGE</span>';
-      if (f.ccdmg.innerHTML !== html) f.ccdmg.innerHTML = html;
-    }
+    col.car.update(t, d.damage);
+    if (d.damage) col.damage.update(d.damage);
   });
 }
 
