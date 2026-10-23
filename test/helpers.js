@@ -41,7 +41,7 @@ function fakeContext(log) {
       if (prop === 'measureText') return () => ({width: 0});
       return (...args) => { log.push([prop, ...args]); };
     },
-    set(obj, prop, value) { obj[prop] = value; return true; },
+    set(obj, prop, value) { log.push(['set', prop, value]); obj[prop] = value; return true; },
   });
 }
 

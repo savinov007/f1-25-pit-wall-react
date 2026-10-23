@@ -211,3 +211,33 @@ describe('strategy projections', () => {
     assert.deepEqual(L.battleTrend(800, 10, false), {text: 'holding the gap', cls: 'dim'});
   });
 });
+
+describe('UDP format 2026', () => {
+  test('ERS mode 3 is Boost in 2026 and Overtake before', () => {
+    assert.equal(L.ersModeName(3, 2026), 'Boost');
+    assert.equal(L.ersModeName(3, 2025), 'Overtake');
+    assert.equal(L.ersModeName(2, 2026), 'Hotlap');
+    assert.equal(L.ersModeName(9, 2026), '');
+  });
+  test('zone fractions become distance ranges, splitting zones across the line', () => {
+    assert.deepEqual(L.zoneRanges([[0.1, 0.2]], 5000), [[500, 1000]]);
+    assert.deepEqual(L.zoneRanges([[0.95, 0.04]], 1000), [[950, 1000], [0, 40]]);
+    assert.deepEqual(L.zoneRanges([[0.3, 0.3]], 1000), [], 'empty zone skipped');
+    assert.deepEqual(L.zoneRanges(undefined, 1000), []);
+    assert.deepEqual(L.zoneRanges([[0.1, 0.2]], 0), [], 'no track length yet');
+  });
+  test('overtake badge on 2026 cars, DRS otherwise', () => {
+    const reg = {m_2026Regulations: 1, m_overtakeActive: 0, m_overtakeAvailable: 1};
+    assert.deepEqual(L.boostBadge({m_drs: 1}, reg), {label: 'OVERTAKE', on: false, avail: true});
+    assert.deepEqual(L.boostBadge({}, {...reg, m_overtakeActive: 1}), {label: 'OVERTAKE', on: true, avail: false});
+    assert.deepEqual(L.boostBadge({m_drs: 1}, null), {label: 'DRS', on: true, avail: false});
+    assert.deepEqual(L.boostBadge({m_drs: 1}, {...reg, m_2026Regulations: 0}), {label: 'DRS', on: true, avail: false});
+    assert.deepEqual(L.boostBadge(null, null), {label: 'DRS', on: false, avail: false});
+  });
+  test('active aero label', () => {
+    assert.equal(L.aeroLabel({m_activeAeroAvailable: 1, m_activeAeroMode: 1}), 'STRAIGHT');
+    assert.equal(L.aeroLabel({m_activeAeroAvailable: 1, m_activeAeroMode: 0}), 'CORNER');
+    assert.equal(L.aeroLabel({m_activeAeroAvailable: 0, m_activeAeroMode: 1}), null);
+    assert.equal(L.aeroLabel(null), null);
+  });
+});

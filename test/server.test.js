@@ -64,6 +64,10 @@ describe('helpers', () => {
     assert.equal(teamFor(229).name, 'Audi');
     assert.equal(teamFor(230).name, 'Cadillac');
     assert.equal(teamFor(250), null);
+    assert.equal(teamFor(485).name, 'Audi', 'uint16 2026 id');
+    assert.equal(teamFor(486).name, 'Cadillac');
+    assert.equal(teamFor(476).name, 'Mercedes');
+    assert.equal(teamFor(9999), null);
   });
   test('split deltas convert to milliseconds', () => {
     assert.equal(minutesToMs(1234, 2), 121234);
@@ -180,6 +184,64 @@ describe('telemetry from real packets', () => {
     assert.equal(client.selected, null);
     assert.deepEqual(client.compare, []);
     d.handleClientMessage(client, '{not json');
+  });
+});
+
+describe('UDP format 2026 (F1 26)', () => {
+  const f26 = require('./f1-2026');
+  const feed2026 = d => Object.keys(f26.SPEC_SIZES).forEach(name => d.handlePacket(f26.build(name)));
+
+  test('24-car standings with the 2026 teams', () => {
+    const d = offline();
+    feed2026(d);
+    const r = d.refreshState().rivals;
+    assert.equal(r.length, 24);
+    assert.equal(r[23].pos, 24);
+    const byName = Object.fromEntries(r.map(c => [c.name, c]));
+    assert.equal(byName.Windman999.player, true);
+    assert.equal(byName.DRIVER18.team, 'Audi');
+    assert.equal(byName.DRIVER20.team, 'Cadillac');
+    assert.equal(byName.DRIVER18.color, '#F50537');
+  });
+
+  test('car telemetry 2 reaches the state, the standings and the driver detail', () => {
+    const d = offline();
+    feed2026(d);
+    const s = d.refreshState();
+    assert.equal(s.telemetry2.m_overtakeActive, 1, 'player car');
+    assert.equal(s.telemetry2.m_2026Regulations, 1);
+    const byName = Object.fromEntries(s.rivals.map(c => [c.name, c]));
+    assert.equal(byName.Windman999.overtake, 1);
+    assert.equal(byName.DRIVER23.wrongWay, 1);
+    assert.equal(byName.DRIVER5.wrongWay, 0);
+    assert.equal(d.buildDetail(1).telemetry2.m_activeAeroMode, 1);
+    assert.equal(s.status.m_ersHarvestedLimitPerLap, 8500000);
+  });
+
+  test('session: format, Madrid, aero and DRS zones, reaction time', () => {
+    const d = offline();
+    feed2026(d);
+    const se = d.refreshState().session;
+    assert.equal(se.packetFormat, 2026);
+    assert.equal(se.track, 'Madrid');
+    assert.equal(se.aeroZones.length, 2, 'full zones while the track status is full');
+    assert.ok(Math.abs(se.aeroZones[1][0] - 0.6) < 1e-6);
+    assert.equal(se.drsZones.length, 1);
+    assert.ok(Math.abs(se.reactionTime - 0.214) < 1e-6);
+    const partial = f26.build('session');
+    partial.writeUInt8(1, 926 - 173); // m_activeAeroTrackStatus: the first 2026 field (+173 bytes)
+    d.handlePacket(partial);
+    assert.deepEqual(d.refreshState().session.aeroZones.map(z => z.map(v => +v.toFixed(3))), [[0.6, 0.7]], 'partial zones');
+  });
+
+  test('the last of 24 cars can be selected and compared', () => {
+    const d = offline();
+    feed2026(d);
+    const client = {selected: null, compare: []};
+    d.handleClientMessage(client, JSON.stringify({select: 23, compare: [23, 24]}));
+    assert.equal(client.selected, 23);
+    assert.deepEqual(client.compare, [23]);
+    assert.equal(d.buildDetail(23).telemetry2.m_drivingWrongWay, 1);
   });
 });
 

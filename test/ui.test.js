@@ -87,14 +87,15 @@ describe('session header and driving', () => {
     assert.equal(p.$('speed').textContent, '310');
     assert.equal(p.$('gear').textContent, '8');
     assert.equal(p.$('rpm').textContent, String(s.telemetry.m_engineRPM));
-    assert.equal(p.$('drs').classList.contains('on'), true);
     assert.equal(p.doc.querySelectorAll('#rev i.on').length, 11, '75% of 15 LEDs');
     assert.equal(p.$('thr').style.height, '100%');
     assert.equal(p.$('brk').style.height, '0%');
-    p.push(dashboardState({telemetry: {...s.telemetry, m_gear: 0}}));
+    p.push(dashboardState({telemetry: {...s.telemetry, m_gear: 0, m_drs: 1}, telemetry2: null}));
+    assert.equal(p.$('drs').classList.contains('on'), true);
     assert.equal(p.$('gear').textContent, 'N');
-    p.push(dashboardState({telemetry: {...s.telemetry, m_gear: -1, m_drs: 0, m_steer: -1}}));
+    p.push(dashboardState({telemetry: {...s.telemetry, m_gear: -1, m_drs: 0, m_steer: -1}, telemetry2: null}));
     assert.equal(p.$('gear').textContent, 'R');
+    assert.equal(p.$('drs').textContent, 'DRS', 'pre-2026 cars show DRS');
     assert.equal(p.$('drs').classList.contains('on'), false);
     assert.equal(p.$('steer').style.left, '5%');
     assert.equal(p.eval('samples.length'), 3, 'pedal trace samples');
@@ -124,7 +125,7 @@ describe('tyres and car', () => {
     assert.match(p.$('fuelTxt').textContent, /^\d+\.\d KG$/);
     assert.equal(p.$('fuelLaps').textContent, '+0.80 laps');
     assert.equal(p.$('ersTxt').textContent, '50%');
-    assert.equal(p.$('ersMode').textContent, 'Hotlap');
+    assert.equal(p.$('ersMode').textContent, 'Hotlap · 8.5 MJ/lap', 'mode plus the 2026 harvest limit');
     assert.ok(Math.abs(parseFloat(p.$('ers').style.width) - 50) < 1e-6);
     p.close();
   });
@@ -223,9 +224,9 @@ describe('standings', () => {
   test('restricted players show their race number', async () => {
     const p = await boot();
     const s = dashboardState();
-    Object.assign(s.rivals[4], {name: 'Player', human: true, telemetryPublic: false, num: 24});
+    Object.assign(s.rivals[6], {name: 'Player', human: true, telemetryPublic: false, num: 24});
     p.push(s);
-    assert.equal(p.doc.querySelectorAll('.srow')[4].querySelector('.n').textContent.trim(), 'Player#24');
+    assert.equal(p.doc.querySelectorAll('.srow')[6].querySelector('.n').textContent.trim(), 'Player#24');
     p.close();
   });
 });
@@ -443,6 +444,92 @@ describe('track map', () => {
     p.drawLog.length = 0;
     p.eval('car = null; drawMap()');
     assert.ok(p.drawLog.some(c => c[0] === 'fillText' && c[1] === 'WAITING FOR CARS ON TRACK'));
+    p.close();
+  });
+});
+
+describe('F1 26 (UDP format 2026)', () => {
+  const t2 = o => ({
+    m_activeAeroMode: 0, m_activeAeroAvailable: 1, m_activeAeroActivationDistance: 0, m_overtakeAvailable: 0,
+    m_overtakeActive: 0, m_overtakeActivationDistance: 0, m_2026Regulations: 1, m_drivingWrongWay: 0, ...o,
+  });
+  test('overtake mode replaces DRS, with active aero mode', async () => {
+    const p = await boot();
+    p.push(dashboardState({telemetry2: t2({m_overtakeActive: 1, m_activeAeroMode: 1})}));
+    assert.equal(p.$('drs').textContent, 'OVERTAKE');
+    assert.equal(p.$('drs').classList.contains('on'), true);
+    assert.equal(p.$('aero').hidden, false);
+    assert.equal(p.$('aero').textContent, 'STRAIGHT');
+    assert.equal(p.$('aero').classList.contains('on'), true);
+    p.push(dashboardState({telemetry2: t2({m_overtakeAvailable: 1})}));
+    assert.equal(p.$('drs').classList.contains('avail'), true, 'available but not active');
+    assert.equal(p.$('aero').textContent, 'CORNER');
+    p.push(dashboardState({telemetry2: t2({m_activeAeroAvailable: 0})}));
+    assert.equal(p.$('aero').hidden, true);
+    p.push(dashboardState({telemetry2: null}));
+    assert.equal(p.$('aero').hidden, true);
+    p.close();
+  });
+  test('wrong-way warning, reaction time, format chip and ERS boost', async () => {
+    const p = await boot();
+    const s = dashboardState({telemetry2: t2({m_drivingWrongWay: 1})});
+    p.push({...s, status: {...s.status, m_ersDeployMode: 3}});
+    assert.equal(p.$('wrongWay').hidden, false);
+    assert.equal(p.$('reaction').textContent, 'REACTION 0.214s');
+    assert.equal(p.$('fmtChip').hidden, false);
+    assert.equal(p.$('ersMode').textContent, 'Boost · 8.5 MJ/lap');
+    p.push(dashboardState({session: {...s.session, packetFormat: 2025, reactionTime: 0, aeroZones: [], drsZones: []}}));
+    assert.equal(p.$('fmtChip').hidden, true);
+    assert.equal(p.$('reaction').hidden, true);
+    assert.equal(p.$('mapLegend').hidden, true);
+    p.close();
+  });
+  test('standings tag cars using overtake mode or driving the wrong way', async () => {
+    const p = await boot();
+    const s = dashboardState();
+    s.rivals[8].wrongWay = 1;
+    p.push(s);
+    const rows = p.doc.querySelectorAll('.srow');
+    assert.match(rows[4].querySelector('.n').innerHTML, /tag ot/);
+    assert.match(rows[8].querySelector('.n').textContent, /WRONG WAY/);
+    p.close();
+  });
+  test('the rival popup and compare columns show the same badges', async () => {
+    const p = await boot();
+    const s = dashboardState();
+    p.push(s);
+    p.pointer(p.doc.querySelectorAll('.srow')[1], 'pointerdown');
+    p.push({...s, detail: {...detailFor(s, 1), telemetry2: t2({m_overtakeActive: 1, m_activeAeroMode: 1})}});
+    assert.equal(p.$('dmDrs').textContent, 'OVERTAKE');
+    assert.equal(p.$('dmAero').textContent, 'STRAIGHT');
+    p.key(p.doc, 'Escape');
+    p.$('compareBtn').click();
+    p.push({...s, compare: [{...detailFor(s, 2), telemetry2: t2({m_overtakeAvailable: 1})}, {...detailFor(s, 1), telemetry2: null}]});
+    const [you, nor] = [...p.doc.querySelectorAll('.cc')];
+    assert.equal(you.querySelector('.ccdrs').textContent, 'OVERTAKE');
+    assert.equal(you.querySelector('.ccdrs').classList.contains('avail'), true);
+    assert.equal(nor.querySelector('.ccdrs').textContent, 'DRS');
+    p.close();
+  });
+  test('track map draws active aero and DRS zones', async () => {
+    const p = await boot();
+    const map = p.$('map');
+    Object.defineProperty(map, 'clientWidth', {value: 400});
+    Object.defineProperty(map, 'clientHeight', {value: 300});
+    const s = dashboardState();
+    p.push(s);
+    assert.equal(p.$('mapLegend').hidden, false);
+    const colours = () => {
+      p.drawLog.length = 0;
+      p.eval('drawMap()');
+      return p.drawLog.filter(c => c[0] === 'set' && c[1] === 'strokeStyle').map(c => c[2]);
+    };
+    let used = colours();
+    assert.ok(used.includes('rgba(51, 214, 232, .9)'), 'active aero zones drawn');
+    assert.ok(used.includes('rgba(31, 209, 102, .9)'), 'DRS zones drawn');
+    p.push(dashboardState({session: {...s.session, aeroZones: [], drsZones: []}}));
+    used = colours();
+    assert.ok(!used.includes('rgba(51, 214, 232, .9)') && !used.includes('rgba(31, 209, 102, .9)'));
     p.close();
   });
 });
