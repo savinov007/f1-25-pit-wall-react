@@ -402,6 +402,7 @@ function renderDriver(s) {
     $('dmBar').style.background = r.color;
     $('dmLap').textContent = r.lapNum + (s.session && s.session.totalLaps ? ' / ' + s.session.totalLaps : '');
     $('dmStops').textContent = r.stops;
+    setHtml($('dmStrat'), stratMini(r));
   }
   const d = s.detail;
   const note = $('dmNote');
@@ -600,6 +601,7 @@ function buildCompareCols() {
         <div><dt>BEST LAP</dt><dd class="ccbest">–</dd></div>
         <div><dt>LAP · STOPS</dt><dd class="cclap">–</dd></div>
       </dl>
+      <div class="stratline ccstrat"></div>
       <div class="cctyrehead"><span class="lbl">TYRES &amp; CAR</span><span class="compound"><span class="cdot cccdot"></span><b class="cccname">–</b><small class="cccage"></small></span></div>
       <div class="tyrebox cctyrebox"></div>
       <div class="meters ccmeters">
@@ -612,7 +614,7 @@ function buildCompareCols() {
     const refs = {};
     for (const c of ['ccpos', 'ccname', 'ccsub', 'ccteam', 'ccnote', 'ccgear', 'ccspd', 'ccrpm', 'ccdrs', 'ccthr', 'ccthrv', 'ccbrk', 'ccbrkv',
       'ccgap', 'ccvsl', 'ccvs', 'cccur', 'cclast', 'ccbest', 'cclap', 'cccdot', 'cccname', 'cccage', 'ccfuel', 'ccfuell', 'ccfuelb',
-      'ccers', 'ccersm', 'ccersb']) refs[c] = q(c);
+      'ccers', 'ccersm', 'ccersb', 'ccstrat']) refs[c] = q(c);
     return {idx, el, refs, car: createCar(q('cctyrebox')), damage: createDamage(q('ccdmgbox'))};
   });
 }
@@ -666,6 +668,7 @@ function renderCompare(s) {
       f.ccbest.textContent = fmtTime(r.best);
       f.ccbest.classList.toggle('purple', !!bestBest && r.best === bestBest);
       f.cclap.textContent = `${r.lapNum || '–'} · ${r.stops}`;
+      setHtml(f.ccstrat, stratMini(r));
     }
     if (!d || !d.telemetry) { f.ccnote.hidden = false; f.ccnote.textContent = 'Waiting for this car\'s data…'; return; }
     const t = d.telemetry;
@@ -847,6 +850,157 @@ function drawCompareChart() {
   });
 }
 
+// --- Strategy: projections from the server's measured rates ---
+let wearLimit = 70;
+try { const v = Number(localStorage.getItem('pitwall-wearlimit')); if (v) wearLimit = v; } catch (err) { /* default */ }
+$('wearLimit').value = String(wearLimit);
+$('wearLimit').onchange = e => {
+  wearLimit = Number(e.target.value);
+  try { localStorage.setItem('pitwall-wearlimit', String(wearLimit)); } catch (err) { /* not persisted */ }
+  if (latest) render(latest);
+};
+const setHtml = (el, html) => { if (el._html !== html) { el.innerHTML = html; el._html = html; } };
+
+// laps until each corner reaches the wear limit (Infinity when it isn't wearing, 0 when already past)
+function tyreProjection(st) {
+  if (!st || !st.wear) return null;
+  const corners = TYRES.map(ty => {
+    const w = st.wear[ty.i], rate = st.wearRate ? st.wearRate[ty.i] : null;
+    const left = w >= wearLimit ? 0 : rate == null ? null : rate > 0.05 ? (wearLimit - w) / rate : Infinity;
+    return {n: ty.n, wear: w, rate, left};
+  });
+  const known = corners.filter(c => c.left != null);
+  const worst = known.length ? known.reduce((a, b) => (b.left < a.left ? b : a)) : null;
+  return {corners, worst};
+}
+const fmtLaps = n => (n == null ? '–' : !isFinite(n) ? '∞' : n < 10 ? n.toFixed(1) : String(Math.round(n)));
+const lapsColor = n => (n == null || !isFinite(n) ? 'var(--green)' : n < 3 ? 'var(--red-hi)' : n < 6 ? 'var(--amber)' : 'var(--green)');
+const fmtS = ms => (ms / 1000).toFixed(Math.abs(ms) >= 10000 ? 1 : 2);
+const fmtRate = ms => (ms >= 0 ? '+' : '−') + fmtS(Math.abs(ms)) + 's';
+const nameOf = r => esc(r.name.slice(0, 12).toUpperCase());
+
+// where you'd come out if you pitted now: your gap to the leader plus the measured pit loss
+function rejoinEstimate(s, me) {
+  if (!s.pitLoss || !me) return null;
+  const mine = leaderGap(me);
+  if (mine == null) return null;
+  const after = mine + s.pitLoss.ms;
+  const others = (s.rivals || [])
+    .filter(r => !r.player && r.result === 2)
+    .map(r => ({r, g: leaderGap(r)}))
+    .filter(o => o.g != null)
+    .sort((a, b) => a.g - b.g);
+  const ahead = others.filter(o => o.g <= after), behind = others.filter(o => o.g > after);
+  return {pos: ahead.length + 1, ahead: ahead[ahead.length - 1], behind: behind[0], after};
+}
+
+function threatRow(label, other, gapMs, rateMs, chasing) {
+  if (!other) return `<div class="sthreat"><span class="dir">${label}</span><span class="none">${chasing ? 'Leading' : 'Nobody behind'}</span></div>`;
+  let trend = 'measuring…', cls = 'dim';
+  if (rateMs != null) {
+    const closing = rateMs < -30, opening = rateMs > 30;
+    const lapsTo = target => Math.max(1, Math.ceil((gapMs - target) / -rateMs));
+    if (closing) {
+      const drs = gapMs > 1000 ? `DRS in ${lapsTo(1000)} lap${lapsTo(1000) === 1 ? '' : 's'}` : 'in DRS range';
+      trend = `${chasing ? 'catching' : 'closing'} ${fmtS(-rateMs)}s/lap · ${drs}`;
+      cls = chasing ? 'good' : 'bad';
+    } else if (opening) {
+      trend = `${chasing ? 'pulling away' : 'dropping back'} ${fmtS(rateMs)}s/lap`;
+      cls = chasing ? 'bad' : 'good';
+    } else {
+      trend = 'holding the gap';
+    }
+  }
+  const gap = gapOk(gapMs) && gapMs ? (chasing ? '+' : '−') + fmtS(gapMs) + 's' : '–';
+  return `<div class="sthreat"><span class="dir">${label}</span><i style="background:${esc(other.color)}"></i><b>${nameOf(other)}</b>
+    <span class="sgap">${gap}</span><span class="strend ${cls}">${trend}</span></div>`;
+}
+
+function renderStrategy(s) {
+  const box = $('strat');
+  const me = (s.rivals || []).find(r => r.player);
+  if (!me) return setHtml(box, '<div class="empty">Waiting for data</div>');
+  const st = me.strategy;
+  const se = s.session || {};
+  const parts = [];
+
+  // tyres
+  const tp = tyreProjection(st);
+  const [cname] = COMPOUNDS[me.compound] || ['–'];
+  let tyres = `<div class="sblk"><div class="shd"><span class="lbl">Tyres</span><small>${cname} · ${me.age} laps old</small></div>`;
+  if (tp && tp.worst) {
+    const w = tp.worst;
+    const boxLap = isFinite(w.left) ? `box ≈ L${me.lapNum + Math.floor(w.left)}` : 'not wearing yet';
+    tyres += `<div class="shero"><b style="color:${lapsColor(w.left)}">${fmtLaps(w.left)}</b>
+      <span>laps until <em>${w.n}</em> hits ${wearLimit}%<br><small>${w.left === 0 ? 'already past the limit' : boxLap}</small></span></div>
+      <div class="scorners">${tp.corners.map(c => `<div><span>${c.n}</span><b style="color:${lapsColor(c.left)}">${fmtLaps(c.left)}</b>
+        <small>${c.rate == null ? '–' : c.rate.toFixed(2) + '%/lap'}</small></div>`).join('')}</div>`;
+  } else {
+    tyres += '<div class="swait">Measuring wear rate — needs about a lap on this set of tyres</div>';
+  }
+  parts.push(tyres + '</div>');
+
+  // pit
+  let pit = '<div class="sblk"><div class="shd"><span class="lbl">Pit</span></div>';
+  if (se.pitIdealLap > 0) pit += `<div class="sline"><span>Game pit window</span><b>L${se.pitIdealLap}${se.pitLatestLap > 0 ? ' – L' + se.pitLatestLap : ''}</b></div>`;
+  if (se.pitRejoinPos > 0) pit += `<div class="sline"><span>Game rejoin estimate</span><b>P${se.pitRejoinPos}</b></div>`;
+  pit += s.pitLoss
+    ? `<div class="sline"><span>Pit loss · measured</span><b>${fmtS(s.pitLoss.ms)}s</b><small>${s.pitLoss.samples} stop${s.pitLoss.samples === 1 ? '' : 's'}</small></div>`
+    : '<div class="sline"><span>Pit loss</span><small>measured after the first stop by any car</small></div>';
+  const rj = rejoinEstimate(s, me);
+  if (rj) {
+    const around = [
+      rj.ahead && `behind ${nameOf(rj.ahead.r)} ${fmtS(rj.after - rj.ahead.g)}s`,
+      rj.behind && `ahead of ${nameOf(rj.behind.r)} ${fmtS(rj.behind.g - rj.after)}s`,
+    ].filter(Boolean).join(' · ');
+    pit += `<div class="sline hi"><span>Pit now →</span><b>P${rj.pos}</b><small>${around}</small></div>`;
+  }
+  const fuel = s.status && s.status.m_fuelRemainingLaps;
+  if (fuel != null) pit += `<div class="sline"><span>Fuel margin</span><b style="color:${fuel < 0 ? 'var(--red-hi)' : fuel < 0.5 ? 'var(--amber)' : 'var(--text)'}">${fuel >= 0 ? '+' : ''}${fuel.toFixed(2)} laps</b></div>`;
+  parts.push(pit + '</div>');
+
+  // pace
+  let pace = '<div class="sblk"><div class="shd"><span class="lbl">Pace</span>';
+  if (st && st.pace) {
+    const p = st.pace;
+    pace += `<small>last ${p.laps.length} clean lap${p.laps.length === 1 ? '' : 's'}</small></div>`;
+    const ms = p.laps.map(l => l.ms), lo = Math.min(...ms), hi = Math.max(...ms);
+    const bars = p.laps.map(l => `<i style="height:${hi > lo ? 25 + ((l.ms - lo) / (hi - lo)) * 75 : 60}%" title="L${l.lap} ${fmtTime(l.ms)}"></i>`).join('');
+    const tr = p.trendMs;
+    pace += `<div class="space"><div><b>${fmtTime(p.avgMs)}</b><small>avg</small></div>
+      <div><b style="color:${tr == null ? 'var(--dim)' : tr > 50 ? 'var(--red-hi)' : tr < -50 ? 'var(--green)' : 'var(--text)'}">${tr == null ? '–' : fmtRate(tr)}</b><small>per lap ${tr == null ? '(3+ laps)' : tr > 0 ? 'slower' : 'faster'}</small></div>
+      <div class="sbars">${bars}</div></div>`;
+  } else {
+    pace += '</div><div class="swait">Needs a clean lap</div>';
+  }
+  parts.push(pace + '</div>');
+
+  // threats
+  const rivals = s.rivals || [];
+  const ahead = rivals.find(r => r.pos === me.pos - 1), behind = rivals.find(r => r.pos === me.pos + 1);
+  const aheadRate = st && st.gapTrend && ahead && st.gapTrend.aheadIdx === ahead.idx ? st.gapTrend.rateMs : null;
+  const bt = behind && behind.strategy && behind.strategy.gapTrend;
+  const behindRate = bt && bt.aheadIdx === me.idx ? bt.rateMs : null;
+  parts.push(`<div class="sblk"><div class="shd"><span class="lbl">Battles</span><small>gap trend per lap</small></div>
+    ${threatRow('AHEAD', ahead, me.gapFront, aheadRate, true)}
+    ${threatRow('BEHIND', behind, behind && behind.gapFront, behindRate, false)}</div>`);
+
+  setHtml(box, parts.join(''));
+}
+
+// one-line strategy summary for any driver (compare columns, rival popup)
+function stratMini(r) {
+  const st = r && r.strategy;
+  const tp = tyreProjection(st);
+  const bits = [];
+  if (tp && tp.worst) {
+    const w = tp.worst;
+    bits.push(`<b style="color:${lapsColor(w.left)}">${fmtLaps(w.left)} laps</b> to ${wearLimit}% <small>(${w.n} ${w.rate == null ? '' : w.rate.toFixed(2) + '%/lap'})</small>`);
+  } else bits.push('<small>wear rate: measuring…</small>');
+  if (st && st.pace && st.pace.trendMs != null) bits.push(`pace <b>${fmtRate(st.pace.trendMs)}</b><small>/lap</small>`);
+  return `<span class="lbl">Strategy</span> ${bits.join(' · ')}`;
+}
+
 // --- Main render ---
 function render(s) {
   renderRecording(s);
@@ -854,6 +1008,7 @@ function render(s) {
   learnTrack(s.rivals);
   renderDriver(s);
   renderCompare(s);
+  renderStrategy(s);
   $('dot').className = 'dot ' + (s.connected ? 'live' : 'idle');
   $('connText').textContent = s.connected ? 'LIVE' : s.hasData ? 'NO SIGNAL — PAUSED?' : 'WAITING FOR GAME';
   $('pps').textContent = s.pps;

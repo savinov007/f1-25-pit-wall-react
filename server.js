@@ -4,6 +4,7 @@ const path = require('path');
 const os = require('os');
 const {WebSocketServer} = require('ws');
 const {F1TelemetryClient, constants} = require('./build/src');
+const {StrategyTracker} = require('./strategy');
 
 const {PACKETS, TRACKS, TEAMS} = constants;
 const HTTP_PORT = Number(process.env.PORT) || 3000;
@@ -36,6 +37,8 @@ const state = {
   rivals: [],
   recording: {available: false, active: false},
 };
+
+const strategy = new StrategyTracker();
 
 // Latest full per-car arrays, merged into state.rivals.
 // Best lap per car idx: authoritative from sessionHistory packets, else the fastest last lap seen so far.
@@ -94,6 +97,7 @@ function buildRivals() {
       compound: status ? status.m_visualTyreCompound : 0,
       age: status ? status.m_tyresAgeLaps : 0,
       player: i === raw.playerIdx,
+      strategy: strategy.summary(i),
     });
   });
   return rivals.sort((a, b) => a.pos - b.pos);
@@ -223,7 +227,10 @@ wss.on('connection', ws => {
 function broadcast() {
   state.connected = DEMO || Date.now() - lastPacketAt < 3000;
   state.hasData = DEMO || lastPacketAt > 0;
-  if (!DEMO) state.rivals = buildRivals();
+  if (!DEMO) {
+    state.rivals = buildRivals();
+    state.pitLoss = strategy.pitLoss();
+  }
   state.recording = recordingState();
   const shared = JSON.stringify(state);
   for (const ws of wss.clients) {
@@ -273,6 +280,7 @@ function startUdp() {
   });
   client.on(PACKETS.lapData, p => {
     raw.lap = p.m_lapData;
+    strategy.update(raw.lap, raw.dmg, raw.status, state.session && state.session.trackLength);
     raw.playerIdx = p.m_header.m_playerCarIndex;
     onPlayer(p, 'lap', (pk, i) => ({...pk.m_lapData[i]}));
   });
@@ -305,6 +313,7 @@ function startUdp() {
     onPlayer(p, 'session', pk => {
       const uid = String(pk.m_header.m_sessionUID);
       if (bestSessionUID !== null && uid !== bestSessionUID) {
+        strategy.reset();
         for (const k of Object.keys(bestLaps)) delete bestLaps[k];
         for (const k of Object.keys(observedBest)) delete observedBest[k];
       }
@@ -314,6 +323,9 @@ function startUdp() {
         track: TRACKS[pk.m_trackId] ? TRACKS[pk.m_trackId].name : 'Unknown',
         totalLaps: pk.m_totalLaps,
         trackLength: pk.m_trackLength,
+        pitIdealLap: pk.m_pitStopWindowIdealLap,
+        pitLatestLap: pk.m_pitStopWindowLatestLap,
+        pitRejoinPos: pk.m_pitStopRejoinPosition,
         weather: pk.m_weather,
         trackTemp: pk.m_trackTemperature,
         airTemp: pk.m_airTemperature,
@@ -352,6 +364,16 @@ function demoRivals(t, lapNum) {
     pit: i === 7 ? 1 : 0, stops: i % 3 === 0 ? 1 : 0, penalty: i === 5 ? 5 : 0, result: 2,
     compound: [16, 17, 18][i % 3], age: lapNum + (i % 4), player: c === you,
     ...demoPos(lapAngle + (2 - i) * 0.18),
+    strategy: {
+      wear: [10 + lapNum * 2 + i % 4, 11 + lapNum * 2, 14 + lapNum * 3, 16 + lapNum * 3 + i % 3],
+      wearRate: [1.6 + i * 0.04, 1.7, 2.3 + (i % 3) * 0.2, 2.6 + i * 0.05],
+      stintLaps: 4,
+      pace: {
+        avgMs: 90000 + i * 180, trendMs: 40 + (i % 5) * 35,
+        laps: [0, 1, 2, 3, 4].map(k => ({lap: lapNum + k, ms: 90000 + i * 180 + k * (40 + (i % 5) * 35) + ((k * 37 + i) % 5) * 60})),
+      },
+      gapTrend: i ? {aheadIdx: i - 1, rateMs: [-310, 120, -60, 240, -180][i % 5]} : null,
+    },
     dist: ((((lapAngle + (2 - i) * 0.18) / (Math.PI * 2)) % 1 + 1) % 1) * 5000,
   }));
 }
@@ -372,7 +394,7 @@ function startDemo() {
     const throttle = corner < 0.5 ? 1 : 0.2;
     const brake = corner > 0.8 ? 0.8 : 0;
     if (lapNum > 1 && lapNum !== lastLap) lastLap = lapNum;
-    state.session = {track: 'Demo Circuit', trackId: -1, totalLaps: 5, trackLength: 5000, weather: 0, trackTemp: 34, airTemp: 24, sessionType: 15, sessionUID: 'demo'};
+    state.session = {track: 'Demo Circuit', trackId: -1, totalLaps: 30, trackLength: 5000, pitIdealLap: 14, pitLatestLap: 19, pitRejoinPos: 7, weather: 0, trackTemp: 34, airTemp: 24, sessionType: 15, sessionUID: 'demo'};
     state.telemetry = {
       m_speed: speed, m_gear: gear, m_engineRPM: 7000 + (speed % 40) * 100 + gear * 150,
       m_throttle: throttle, m_brake: brake, m_steer: Math.sin(a * 3) * 0.7, m_drs: corner < 0.2 ? 1 : 0,
@@ -403,6 +425,7 @@ function startDemo() {
     state.motion = {x: Math.cos(a) * 400 + Math.cos(a * 2) * 60, z: Math.sin(a) * 250 + Math.sin(a * 3) * 40, gLat: Math.sin(a * 3) * 3, gLong: brake ? -3 : 1};
     state.pps = 20;
     state.rivals = demoRivals(t, lapNum);
+    state.pitLoss = {ms: 21400, samples: 3};
     demoHistory.push({telemetry: state.telemetry, status: state.status, damage: state.damage, lap: state.lap, motion: state.motion});
     if (demoHistory.length > 120) demoHistory.shift();
   }, 50);

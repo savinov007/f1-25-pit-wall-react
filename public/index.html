@@ -88,6 +88,12 @@
     <div class="shead"><span>P</span><span></span><span>DRIVER</span><span id="gapHead">GAP</span><button id="lapMode" class="lapmode" title="Toggle last / best lap">LAST</button><span>TYRE</span></div>
     <div id="rows" class="rows"><div class="empty">No rivals yet</div></div>
   </section>
+  <div class="split" data-dir="y" role="separator" aria-orientation="horizontal" aria-label="Resize sections" tabindex="0"></div>
+  <section class="card strategy" id="p-strategy">
+    <h2><span>Strategy</span><label class="wearlimit" title="Wear level you plan to pit at">PIT AT
+      <select id="wearLimit"><option>50</option><option>60</option><option>65</option><option selected>70</option><option>75</option><option>80</option></select>%</label></h2>
+    <div class="strat" id="strat"><div class="empty">Waiting for data</div></div>
+  </section>
   </div>
 </main>
 
@@ -102,6 +108,7 @@
       <button id="dmClose" class="dmclose" aria-label="Close">✕</button>
     </div>
     <div id="dmNote" class="dmnote" hidden></div>
+    <div id="dmStrat" class="stratline"></div>
     <div class="dmgrid">
       <div class="dmcol">
         <div class="dmspeed">
