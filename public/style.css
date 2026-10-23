@@ -690,3 +690,8 @@ body.replaying #connText { color: var(--amber); }
 .rpspeeds { display: flex; gap: 5px; justify-content: center; flex-wrap: wrap; }
 .rpspeeds button { padding: 6px 8px; font: 600 12px var(--f-mono); }
 .rpspeeds button.on { background: rgba(255, 176, 32, .18); border-color: var(--amber); color: var(--amber); }
+
+/* lap type tags in the standings */
+.srow .tag.fly { background: var(--purple); color: #fff; }
+.srow .tag.out { background: var(--faint); color: #fff; }
+.srow .tag.inl { background: var(--orange); color: #1a0a00; }

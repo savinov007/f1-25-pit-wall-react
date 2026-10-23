@@ -4,7 +4,7 @@ const {
   tempColor, wearColor, dmgLevel, cap, fmtTime, fmtSector, fmtGap, esc, fmtClock, gapOk, leaderGap,
   learnTrack, recordLapTrace, nearest, metricValue, fmtMetric, fmtDelta,
   tyreProjection, fmtLaps, lapsColor, fmtS, fmtRate, nameOf, rejoinEstimate, battleTrend,
-  ersModeName, zoneRanges, boostBadge, aeroLabel,
+  ersModeName, zoneRanges, boostBadge, aeroLabel, lapTag,
 } = PitLib;
 const ERS_MAX = 4000000;
 const TRACE_SECONDS = 10;
@@ -358,6 +358,11 @@ $('lapMode').onclick = () => {
   if (latest) renderRivals(latest);
 };
 
+const lapTagHtml = status => {
+  const t = lapTag(status);
+  return t ? `<span class="tag ${t.cls}" title="${t.title}">${t.label}</span>` : '';
+};
+
 let lastRowsHtml = '';
 function renderRivals(s) {
   const rows = $('rows');
@@ -375,7 +380,7 @@ function renderRivals(s) {
     const [cname, ccolor] = COMPOUNDS[r.compound] || ['–', '#888'];
     return `<div class="srow${r.player ? ' me' : ''}${out ? ' out' : ''}" data-idx="${r.idx}">
       <span class="p">${r.pos}</span><span class="team" style="background:${esc(r.color)}"></span>
-      <span class="n" title="${esc(r.team)}">${esc(r.name)}${r.human && !r.telemetryPublic ? `<small>#${r.num}</small>` : ''}${r.pit ? '<span class="tag pit">PIT</span>' : ''}${r.overtake ? '<span class="tag ot">OT</span>' : ''}${r.wrongWay ? '<span class="tag ww">WRONG WAY</span>' : ''}${r.penalty ? `<span class="tag pen">+${r.penalty}s</span>` : ''}</span>
+      <span class="n" title="${esc(r.team)}">${esc(r.name)}${r.human && !r.telemetryPublic ? `<small>#${r.num}</small>` : ''}${r.pit ? '<span class="tag pit">PIT</span>' : ''}${lapTagHtml(r.driverStatus)}${r.overtake ? '<span class="tag ot" title="Overtake mode in use">OT</span>' : ''}${r.wrongWay ? '<span class="tag ww">WRONG WAY</span>' : ''}${r.penalty ? `<span class="tag pen">+${r.penalty}s</span>` : ''}</span>
       <span class="g">${gapText}</span><span class="l${best && r.best && r.best === fastest ? ' fastest' : ''}">${fmtTime(best ? r.best : r.last)}</span>
       <span class="t"><i style="border-color:${ccolor}" title="${cname}"></i>${r.age}</span></div>`;
   }).join('');

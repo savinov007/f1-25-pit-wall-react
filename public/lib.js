@@ -158,6 +158,10 @@
     return {text: 'holding the gap', cls: 'dim'};
   }
 
+  // lap type from the game's driver status (0 garage, 1 flying lap, 2 in lap, 3 out lap, 4 on track): a standings tag
+  const LAP_TAGS = {1: {label: 'FLY', cls: 'fly', title: 'Flying lap'}, 2: {label: 'IN', cls: 'inl', title: 'In lap'}, 3: {label: 'OUT', cls: 'out', title: 'Out lap'}};
+  const lapTag = driverStatus => LAP_TAGS[driverStatus] || null;
+
   // --- UDP format 2026 (F1 25: 2026 Season Pack) ---
   // ERS deploy mode label: mode 3 is "Overtake" in the 2025 format and "Boost" in 2026
   const ersModeName = (mode, format) => (mode === 3 && format >= 2026 ? 'Boost' : ERS_MODES[mode] || '');
@@ -192,7 +196,7 @@
   const aeroLabel = t2 => (t2 && t2.m_2026Regulations ? (t2.m_activeAeroMode === 1 ? 'STRAIGHT' : 'CORNER') : null);
 
   return {
-    ersModeName, zoneRanges, boostBadge, aeroLabel, overtakeOn,
+    ersModeName, zoneRanges, boostBadge, aeroLabel, overtakeOn, lapTag,
     WEATHER, ERS_MODES, COMPOUNDS, TYRES, CAR_PARTS, DMG_KEYS, DMG_COLORS, TRACK_BUCKET_M,
     tempColor, wearColor, dmgLevel, cap, fmtTime, fmtSector, fmtGap, esc, fmtClock, gapOk, leaderGap,
     learnTrack, recordLapTrace, nearest, metricValue, fmtMetric, fmtDelta,

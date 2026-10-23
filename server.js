@@ -213,6 +213,7 @@ function createDashboard(options = {}) {
         gapFront: l.m_deltaToCarInFrontMSPart !== undefined ? minutesToMs(l.m_deltaToCarInFrontMSPart, l.m_deltaToCarInFrontMinutesPart) : l.m_deltaToCarInFrontInMS || 0,
         gapLeader: l.m_deltaToRaceLeaderMSPart !== undefined ? minutesToMs(l.m_deltaToRaceLeaderMSPart, l.m_deltaToRaceLeaderMinutesPart) : l.m_deltaToRaceLeaderInMS || 0,
         pit: l.m_pitStatus,
+        driverStatus: l.m_driverStatus,
         stops: l.m_numPitStops,
         penalty: l.m_penalties,
         result: l.m_resultStatus,
