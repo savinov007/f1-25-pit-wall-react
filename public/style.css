@@ -10,6 +10,8 @@
   color-scheme: dark;
 }
 * { box-sizing: border-box; }
+/* an element with display set in CSS (flex, grid...) would otherwise ignore the hidden attribute */
+[hidden] { display: none !important; }
 body {
   margin: 0; min-height: 100vh; padding: 0 14px 14px; color: var(--text);
   font: 14px/1.4 var(--f-ui);
