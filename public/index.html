@@ -23,6 +23,7 @@
   </div>
   <div class="conn">
     <button id="rec" class="rec" title="Record raw game packets to a file" disabled><i></i><span id="recText">REC</span></button>
+    <button id="replaysBtn" class="hbtn" title="Open a saved recording as a replay in a new tab">▶ Replays</button>
     <button id="compareBtn" class="hbtn accent" title="Compare drivers side by side">⇄ Compare</button>
     <button id="resetLayout" class="hbtn" title="Reset section sizes">⟲ Layout</button>
     <span class="status"><span id="dot" class="dot"></span><span id="connText">Connecting…</span><span class="pps"><b id="pps">0</b> pkt/s</span></span>
@@ -169,6 +170,13 @@
     <canvas id="cmpCanvas"></canvas>
   </div>
   <div class="cmpcols" id="cmpCols"><div class="cmpempty">Pick drivers above to compare their telemetry</div></div>
+</div>
+<div id="rl" class="rlover" hidden>
+  <div class="rlbox" role="dialog" aria-label="Saved replays">
+    <div class="rlhead"><b>Saved replays</b><button type="button" id="rlClose" title="Close">✕</button></div>
+    <div class="rllist" id="rlList"></div>
+    <p class="rlnote" id="rlNote"></p>
+  </div>
 </div>
 <div id="rp" class="rp" hidden role="group" aria-label="Replay controls">
   <div class="rphead" id="rpHead"><span class="rptitle"><i></i>REPLAY <small id="rpFile"></small></span><button type="button" id="rpMin" title="Collapse">–</button></div>

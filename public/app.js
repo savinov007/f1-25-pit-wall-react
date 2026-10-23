@@ -4,7 +4,7 @@ const {
   tempColor, wearColor, dmgLevel, cap, fmtTime, fmtSector, fmtGap, esc, fmtClock, gapOk, leaderGap,
   learnTrack, recordLapTrace, nearest, metricValue, fmtMetric, fmtDelta,
   tyreProjection, fmtLaps, lapsColor, fmtS, fmtRate, nameOf, rejoinEstimate, battleTrend,
-  ersModeName, zoneRanges, boostBadge, aeroLabel, lapTag,
+  ersModeName, zoneRanges, boostBadge, aeroLabel, lapTag, fmtSize,
 } = PitLib;
 const ERS_MAX = 4000000;
 const TRACE_SECONDS = 10;

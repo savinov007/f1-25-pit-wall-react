@@ -79,6 +79,7 @@ function renderReplay(s) {
   const r = s.replay;
   document.body.classList.toggle('replaying', !!r);
   document.getElementById('replayChip').hidden = rpEl.hidden = !r;
+  document.getElementById('replaysBtn').hidden = !!r; // a replay tab can't open more replays
   if (!r) return;
   document.getElementById('replayChip').classList.toggle('paused', !r.playing);
   document.getElementById('replayInfo').textContent =
@@ -95,3 +96,62 @@ function renderReplay(s) {
   rpEl.querySelectorAll('#rpSpeeds button').forEach(b => b.classList.toggle('on', Number(b.dataset.speed) === r.speed));
   $('connText').textContent = r.finished ? 'REPLAY ENDED' : 'REPLAY';
 }
+
+// --- Saved replays: list the recordings on the server, open the chosen one in a new tab ---
+const rl = document.getElementById('rl');
+const rlList = document.getElementById('rlList');
+const rlNote = document.getElementById('rlNote');
+
+function closeReplays() { rl.hidden = true; }
+function recordingWhen(r) {
+  return new Date(r.startedAt || r.modified).toLocaleString([], {month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'});
+}
+function renderReplayList(list) {
+  rlList.innerHTML = list.length ? list.map(r => `
+    <button type="button" class="rlrow" data-file="${esc(r.file)}">
+      <span class="rlwhen">${esc(recordingWhen(r))}</span>
+      <span class="rlmeta">${r.duration ? fmtClock(Math.round(r.duration / 1000)) : '–'} · ${fmtSize(r.bytes)}</span>
+      <span class="rlname">${esc(r.file)}</span>
+      <span class="rlgo">OPEN ↗</span>
+    </button>`).join('') : '';
+  rlNote.textContent = list.length ? 'Opens in a new tab. Big recordings take a few seconds to load.' : 'No recordings yet. Press REC during a session to save one.';
+}
+async function openReplays() {
+  rl.hidden = false;
+  rlList.innerHTML = '';
+  rlNote.textContent = 'Loading…';
+  try {
+    const res = await fetch('/api/replays');
+    if (!res.ok) throw new Error(res.status);
+    renderReplayList(await res.json());
+  } catch (err) {
+    rlNote.textContent = 'Could not load the list of recordings.';
+  }
+}
+async function openReplayTab(file) {
+  // open the tab right away, inside the click, so the popup blocker allows it; point it at the replay once ready
+  const tab = window.open('', '_blank');
+  if (tab) tab.document.write('<title>Loading replay…</title><body style="background:#07080b;color:#ffb020;font:600 18px sans-serif;display:grid;place-items:center;height:100vh;margin:0">Loading replay…</body>');
+  rlNote.textContent = `Loading ${file}…`;
+  try {
+    const res = await fetch('/api/replays', {method: 'POST', body: JSON.stringify({file})});
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || res.status);
+    const url = `${location.protocol}//${location.hostname}:${data.port}/`;
+    if (tab) tab.location.href = url;
+    else window.open(url, '_blank');
+    rlNote.textContent = tab ? 'Opened in a new tab.' : `Your browser blocked the new tab: ${url}`;
+    closeReplays();
+  } catch (err) {
+    if (tab) tab.close();
+    rlNote.textContent = `Could not open the replay: ${err.message}`;
+  }
+}
+document.getElementById('replaysBtn').onclick = openReplays;
+document.getElementById('rlClose').onclick = closeReplays;
+rl.addEventListener('click', e => {
+  if (e.target === rl) closeReplays();
+  const row = e.target.closest('.rlrow');
+  if (row) openReplayTab(row.dataset.file);
+});
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && !rl.hidden) closeReplays(); });
