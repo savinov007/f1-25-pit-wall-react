@@ -68,6 +68,16 @@ describe('helpers', () => {
     assert.equal(teamFor(486).name, 'Cadillac');
     assert.equal(teamFor(476).name, 'Mercedes');
     assert.equal(teamFor(9999), null);
+    assert.equal(teamFor(41).name, 'F1 Generic', 'non-F1 ids keep the library colour');
+  });
+  test('F1 teams get dashboard-friendly colours in both formats', () => {
+    assert.equal(teamFor(482).color, '#6692FF', 'RB was near-black');
+    assert.equal(teamFor(226).color, '#6692FF', '2025 format truncates 482 to 226');
+    assert.equal(teamFor(483).color, '#B6BABD', 'Haas was pure white');
+    assert.equal(teamFor(478).color, '#3671C6', 'Red Bull was navy');
+    assert.equal(teamFor(2).color, '#3671C6');
+    assert.equal(teamFor(484).color, '#FF8000');
+    assert.equal(new Set([476, 477, 478, 479, 480, 481, 482, 483, 484, 485, 486].map(i => teamFor(i).color)).size, 11, 'all distinct');
   });
   test('split deltas convert to milliseconds', () => {
     assert.equal(minutesToMs(1234, 2), 121234);

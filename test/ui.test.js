@@ -68,6 +68,55 @@ describe('setup overlay', () => {
     assert.equal(p.$('wait').hidden, true, 'stays closed while paused');
     p.close();
   });
+
+  const waiting = {hasData: false, setup: {ips: [{name: 'en0', address: '10.0.0.4'}], udpPort: 20777}};
+  const pick = (p, format) => p.doc.querySelector(`#fmtPick [data-format="${format}"]`);
+
+  test('asks which telemetry format to use before showing the game settings', async () => {
+    const p = await boot();
+    p.push(dashboardState(waiting));
+    assert.equal(p.$('setupList').hidden, true, 'settings wait for a choice');
+    assert.equal(p.$('setupHint').hidden, true);
+    assert.equal(p.$('fmtPick').classList.contains('need'), true);
+    pick(p, 2026).click();
+    assert.equal(p.$('setupList').hidden, false);
+    assert.equal(p.$('waitFormat').textContent, '2026 (F1 26)');
+    assert.equal(pick(p, 2026).classList.contains('on'), true);
+    assert.equal(pick(p, 2025).classList.contains('on'), false);
+    assert.equal(p.$('fmtPick').classList.contains('need'), false);
+    pick(p, 2025).click();
+    assert.equal(p.$('waitFormat').textContent, '2025 (F1 25)');
+    assert.equal(pick(p, 2026).classList.contains('on'), false);
+  });
+
+  test('remembers the chosen format', async () => {
+    const p = await boot();
+    pick(p, 2025).click();
+    assert.equal(p.w.localStorage.getItem('pitwall-format'), '2025');
+    const q = await boot({storage: {'pitwall-format': '2026'}});
+    q.push(dashboardState(waiting));
+    assert.equal(q.$('setupList').hidden, false, 'no need to choose again');
+    assert.equal(q.$('waitFormat').textContent, '2026 (F1 26)');
+    const bad = await boot({storage: {'pitwall-format': 'nope'}});
+    bad.push(dashboardState(waiting));
+    assert.equal(bad.$('setupList').hidden, true, 'an invalid stored value counts as no choice');
+  });
+
+  test('warns once when the game sends another format than the chosen one', async () => {
+    const p = await boot({storage: {'pitwall-format': '2025'}});
+    const s = dashboardState();
+    p.push({...s, session: {...s.session, packetFormat: 2025}});
+    assert.equal(p.$('toast').hidden, true, 'matching format: no warning');
+    p.push(s); // demo frames are format 2026
+    assert.equal(p.$('toast').hidden, false);
+    assert.match(p.$('toast').textContent, /sending UDP format 2026, not 2025/);
+    p.$('toast').hidden = true;
+    p.push(s);
+    assert.equal(p.$('toast').hidden, true, 'not repeated');
+    const none = await boot();
+    none.push(s);
+    assert.equal(none.$('toast').hidden, true, 'no choice made: nothing to compare');
+  });
 });
 
 describe('session header and driving', () => {
