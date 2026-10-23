@@ -757,3 +757,18 @@ describe('lap type tags', () => {
     p.close();
   });
 });
+
+describe('hidden elements', () => {
+  const css = require('fs').readFileSync(require('path').join(__dirname, '..', 'public', 'style.css'), 'utf8');
+  test('the hidden attribute always wins over display set in CSS', () => {
+    assert.match(css, /\[hidden\]\s*\{\s*display:\s*none\s*!important/);
+  });
+  test('replay UI starts hidden and stays hidden outside replay mode', async () => {
+    const p = await boot();
+    assert.equal(p.$('replayChip').hidden, true, 'hidden before any data');
+    assert.equal(p.$('rp').hidden, true);
+    p.push(dashboardState());
+    assert.equal(p.$('replayChip').hidden, true, 'hidden in demo / live');
+    assert.equal(p.$('rp').hidden, true);
+  });
+});
