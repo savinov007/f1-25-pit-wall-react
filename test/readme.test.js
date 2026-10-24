@@ -10,7 +10,7 @@ test('every image the README links to exists and is a PNG', () => {
   const images = [...readme.matchAll(/!\[[^\]]*\]\(([^)]+)\)/g)].map(m => m[1]);
   assert.ok(images.length >= 6, 'the README shows the dashboard, popup, compare, waiting, replays and replay');
   for (const img of images) {
-    const file = path.join(ROOT, img);
+    const file = path.join(ROOT, img.split('?')[0]); // the ?v= tag only busts image caches
     assert.ok(fs.existsSync(file), `${img} is missing`);
     assert.deepEqual([...fs.readFileSync(file).subarray(1, 4)], [0x50, 0x4e, 0x47], `${img} is not a PNG`);
   }
