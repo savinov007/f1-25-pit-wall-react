@@ -12,6 +12,8 @@ const OUT = path.join(ROOT, 'docs');
 const FIXTURE = path.join(ROOT, 'test', 'fixtures', 'catalunya-f125.jsonl');
 const CHROME = process.env.CHROME || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+// the live traces keep 10 s (driving, popup) and 20 s (compare); wait that long so the charts are full
+const TRACE_MS = 11000, COMPARE_MS = 21000;
 const quiet = {log() {}, warn() {}, error() {}};
 
 async function main() {
@@ -51,9 +53,10 @@ async function main() {
   try {
     // demo dashboard with a rival popup
     await open(demo.ports.http);
+    await sleep(TRACE_MS);
     await shot('dashboard.png');
     await js('openDriver(3)');
-    await sleep(900);
+    await sleep(TRACE_MS);
     await shot('rival-popup.png');
     await js('closeDriver()');
 
@@ -61,7 +64,7 @@ async function main() {
     await js('document.getElementById("compareBtn").click()');
     await sleep(400);
     await js('cmpSel = []; [0, 1, 2].forEach(i => toggleCompare(i))');
-    await sleep(2500);
+    await sleep(COMPARE_MS);
     await shot('compare.png');
 
     // waiting screen with the format picker
