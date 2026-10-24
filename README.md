@@ -10,7 +10,7 @@ A live telemetry dashboard for **F1 25** and **F1 26** (the F1 25 2026 Season Pa
 $ npm install
 $ npm start                # live: listens for the game on UDP 20777
 $ npm run demo             # synthetic data, no game needed
-$ npm run replay:dash -- recordings/<file>.jsonl   # play back a recording
+$ npm run replay:dash -- recordings/<file>.f1rec   # play back a recording
 ```
 
 Then open http://localhost:3000. The first screen asks which format the game sends (F1 26 / UDP Format 2026, or F1 25) and shows the settings to enter in the game: **Settings → Telemetry Settings**, UDP Telemetry **On**, your machine's IP address (or `127.0.0.1` if the game runs on the same machine), port **20777**, 20 Hz.
@@ -29,7 +29,7 @@ Then open http://localhost:3000. The first screen asks which format the game sen
 - **Compare mode**: up to four drivers side by side, with a live trace chart or a lap-synced chart to see the difference at the same corner.
 - **Custom layout**: the Layout button opens a dialog where you drag sections into up to four columns, in any order
   (arrow keys work too); drag the dividers between sections to resize them. Both are remembered.
-- **Recording and replay**: the REC button saves the raw packets; the **Replays** button lists saved recordings and opens one in a new tab with a floating player (play / pause, seek, ±10 s, loop, 0.25× to 10×).
+- **Recording and replay**: the REC button saves the raw packets, compressed losslessly (about 12× smaller); the **Replays** button lists saved recordings and opens one in a new tab with a floating player (play / pause, seek, ±10 s, loop, 0.25× to 10×).
 - **F1 26 support**: 24 cars, 16-bit team IDs (including Audi and Cadillac), quantised g-forces, active aero, overtake mode, the new events and the Madrid circuit. Parsed against the official spec, byte for byte.
 
 ![Rival popup](docs/rival-popup.png?v=3)
@@ -48,7 +48,9 @@ Recordings are written to `recordings/` (git-ignored). Open the list from the he
 
 ![Replay mode](docs/replay.png?v=3)
 
-You can also start one from the command line with `npm run replay:dash -- recordings/<file>.jsonl`, or send a recording to a running dashboard over UDP with `npm run replay -- recordings/<file>.jsonl [--speed 2] [--loop]`.
+You can also start one from the command line with `npm run replay:dash -- recordings/<file>.f1rec`, or send a recording to a running dashboard over UDP with `npm run replay -- recordings/<file>.f1rec [--speed 2] [--loop]`.
+
+Recordings are `.f1rec` files: a plain JSON header line, then the packets brotli-compressed as they arrive (flushed every 2 s, so a crash loses at most that). A 34-minute online race is about 39 MB instead of 450 MB. Older plain `.jsonl` recordings still play; `npm run recordings:compress` converts them, checking every packet against the original before removing it (`-- --keep` keeps the originals).
 
 ## Development
 

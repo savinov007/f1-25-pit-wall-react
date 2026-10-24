@@ -9,7 +9,7 @@ const net = require('net');
 const {spawn} = require('child_process');
 const WebSocket = require('ws');
 const {createDashboard, listRecordings, describeRecording, teamFor, minutesToMs, localIps, demoRivals, demoFrame, demoPos} = require('../server');
-const {loadRecording} = require('../replay');
+const {loadRecording, createRecordingWriter, HEADER_BYTES} = require('../replay');
 const {historyTrail, historyLaps} = require('../public/lib');
 const {fixturePackets, ROOT} = require('./helpers');
 
@@ -434,7 +434,23 @@ describe('replay list', () => {
     fs.writeFileSync(path.join(dir, 'junk.jsonl'), 'not a recording\n');
     fs.writeFileSync(path.join(dir, 'empty.jsonl'), '');
     fs.writeFileSync(path.join(dir, 'notes.txt'), 'hello');
+    fs.writeFileSync(path.join(dir, 'half.f1rec.tmp'), 'a conversion in progress');
     return dir;
+  }
+  // the fixture as a compressed recording; crashed: as left by a server that died mid-recording (header not filled in)
+  async function compressedCopy(dir, name, {crashed = false, date = new Date(2021, 0, 1)} = {}) {
+    const file = path.join(dir, name);
+    const w = createRecordingWriter(file, {startedAt: '2021-01-01T00:00:00.000Z', udpPort: 20777});
+    loadRecording(FIXTURE).packets.forEach(p => w.write(p.t, p.buf));
+    await w.end();
+    if (crashed) {
+      const buf = fs.readFileSync(file);
+      const blank = Buffer.from(JSON.stringify({type: 'f1rec', version: 2, compression: 'br', packets: null, duration: null}).padEnd(HEADER_BYTES - 1) + '\n');
+      blank.copy(buf, 0);
+      fs.writeFileSync(file, buf);
+    }
+    fs.utimesSync(file, date, date);
+    return file;
   }
   async function running(dir, opts = {}) {
     const d = offline({recDir: dir, ...opts});
@@ -452,6 +468,33 @@ describe('replay list', () => {
     assert.deepEqual(listRecordings(path.join(tmpDir(), 'missing')), [], 'no folder yet');
     assert.equal(describeRecording(recFolder(), 'junk.jsonl'), null);
     assert.equal(describeRecording(recFolder(), 'nope.jsonl'), null);
+  });
+
+  test('compressed recordings are listed with the length from their header', async () => {
+    const dir = recFolder();
+    await compressedCopy(dir, 'packed.f1rec');
+    await compressedCopy(dir, 'crashed.f1rec', {crashed: true, date: new Date(2019, 0, 1)});
+    const list = listRecordings(dir);
+    assert.deepEqual(list.map(r => r.file), ['new.jsonl', 'packed.f1rec', 'old.jsonl', 'crashed.f1rec'], 'both kinds, newest first; .tmp skipped');
+    const packed = list[1];
+    assert.equal(packed.startedAt, '2021-01-01T00:00:00.000Z');
+    assert.equal(packed.duration, loadRecording(FIXTURE).packets[320].t);
+    assert.ok(packed.bytes < list[0].bytes / 5);
+    assert.equal(list[3].duration, null, 'a recording that never stopped has no length yet');
+  });
+
+  test('a compressed recording opens as a replay', async () => {
+    const dir = recFolder();
+    await compressedCopy(dir, 'packed.f1rec');
+    const d = await running(dir);
+    const opened = await post(d.ports.http, {file: 'packed.f1rec'});
+    assert.equal(opened.status, 200);
+    const ws = new WebSocket(`ws://127.0.0.1:${opened.body.port}`);
+    const msg = await new Promise(resolve => ws.on('message', m => resolve(JSON.parse(m))));
+    assert.equal(msg.replay.file, 'packed.f1rec');
+    assert.equal(msg.replay.packets, 321);
+    ws.close();
+    assert.equal((await post(d.ports.http, {file: 'half.f1rec.tmp'})).status, 404, 'not a recording name');
   });
 
   test('GET /api/replays returns the list', async () => {
@@ -530,6 +573,7 @@ describe('replay list', () => {
 });
 
 describe('recording', () => {
+  const {FIXTURE} = require('./helpers');
   test('records raw packets and replay.js reads them back', async () => {
     const dir = tmpDir();
     const d = offline({recDir: dir});
@@ -546,10 +590,15 @@ describe('recording', () => {
     const st = d.recordingState();
     assert.equal(st.active, false);
     assert.equal(st.lastPackets, packets.length);
-    assert.ok(st.lastBytes > 0);
+    assert.equal(st.lastBytes, fs.statSync(file).size, 'the final size, after the last compressed block');
     assert.equal(fs.readdirSync(dir).length, 1);
+    assert.ok(file.endsWith('.f1rec'));
+    assert.ok(st.lastBytes < fs.statSync(FIXTURE).size / 5, 'compressed: far smaller than the plain fixture');
     const rec = loadRecording(file);
     assert.equal(rec.header.type, 'f1rec');
+    assert.equal(rec.header.compression, 'br');
+    assert.equal(rec.header.packets, packets.length, 'the header gets the count and length when it stops');
+    assert.equal(rec.header.duration, rec.packets[rec.packets.length - 1].t);
     assert.equal(rec.packets.length, packets.length);
     assert.ok(rec.packets.every((p, i) => p.buf.equals(packets[i].buf)));
     await d.stopRecording(); // not recording: no-op
@@ -561,12 +610,13 @@ describe('recording', () => {
     assert.equal(d.recordingState().active, false);
     assert.ok(d.recordingState().lastFile);
   });
-  test('stops at the size limit', async () => {
+  test('stops at the size limit, counted on disk (compressed)', async () => {
     const warnings = [];
-    const d = offline({recMaxBytes: 5000, log: {...quiet, warn: m => warnings.push(m)}});
+    const d = offline({recMaxBytes: 5000, recFlushMs: 10, log: {...quiet, warn: m => warnings.push(m)}});
     d.startRecording();
-    fixturePackets().slice(0, 20).forEach(p => d.handlePacket(p.buf));
-    assert.equal(d.recordingState().active, false);
+    fixturePackets().forEach(p => d.handlePacket(p.buf));
+    assert.equal(d.recordingState().active, true, 'compressed bytes reach the disk at the next flush');
+    await until(() => !d.recordingState().active);
     assert.ok(d.recordingState().lastBytes > 5000);
     assert.equal(warnings.length, 1);
     assert.match(warnings[0], /limit, stopping/);

@@ -11,12 +11,13 @@ A live F1 25 telemetry dashboard ("Pit Wall") built on the `f1-udp-parser` TypeS
 | `src/` | UDP packet parser library (TypeScript, compiled to `build/` by `npm run compile`) |
 | `server.js` | `createDashboard()`: HTTP for the page, WebSocket state pushes, UDP telemetry or demo data, recording |
 | `strategy.js` | Strategy models measured from live data (tyre wear rate, pace trend, gap trend, pit loss) |
-| `replay.js`, `listen.js` | Replay a recording to UDP; console-only listener |
+| `replay.js`, `listen.js` | Recording file format (read and write), replay a recording to UDP; console-only listener |
+| `scripts/compress-recordings.js` | Converts old plain `.jsonl` recordings to compressed `.f1rec`, verified packet by packet |
 | `public/lib.js` | Pure dashboard logic (formatting, projections, map/trace helpers), shared by page and tests |
 | `public/app.js`, `layout.js`, `popup.js` | Page rendering, resizable sections, floating rival popup |
 | `test/` | Tests (Node's built-in runner); `test/fixtures/` holds real F1 25 packets |
 
-Run it with `npm start` (live, UDP 20777), `npm run demo` (synthetic data) or `npm run replay:dash -- recordings/<file>.jsonl` (play a recording with on-page controls), then open http://localhost:3000.
+Run it with `npm start` (live, UDP 20777), `npm run demo` (synthetic data) or `npm run replay:dash -- recordings/<file>.f1rec` (play a recording with on-page controls), then open http://localhost:3000.
 
 ## Rule: new functionality comes with tests
 
@@ -40,6 +41,7 @@ Run `npm test` before committing. A husky **pre-push** hook runs it too and bloc
 | `src/` parsing | `test/parser.test.js` | Parse `fixturePackets()` (real F1 25 packets) |
 | `server.js` | `test/server.test.js` | `createDashboard({httpPort: 0, udpPort: 0, recDir: tmp, log: quiet})`; feed packets with `handlePacket()` or real UDP; always `stop()` |
 | `replay.js`, `listen.js` | `test/replay.test.js`, `test/listen.test.js` | Exported functions, plus the command line via `spawn` |
+| `scripts/compress-recordings.js` | `test/replay.test.js` | `compressRecording()` / `main()` on copies of the fixture in the temp dir |
 | `public/app.js` (page) | `test/ui.test.js` | `loadPage()` from `test/helpers.js`; `push(dashboardState({...}))`; assert on the DOM and on `sent()` messages |
 | `public/layout.js` | `test/layout.test.js` | `loadPage()`; stub `getBoundingClientRect`; drive pointer/keyboard events |
 | `public/popup.js` | `test/popup.test.js` | `loadPage({width, height})`; drive pointer events |

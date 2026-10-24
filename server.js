@@ -5,13 +5,14 @@ const os = require('os');
 const {WebSocketServer} = require('ws');
 const {F1TelemetryClient, constants} = require('./build/src');
 const {StrategyTracker} = require('./strategy');
-const {loadRecording, createPlayer} = require('./replay');
+const {loadRecording, createPlayer, createRecordingWriter, readHeader, isRecordingName, REC_EXT, HEADER_BYTES} = require('./replay');
 const {overtakeOn, createHistory, recordHistory, historySnapshot} = require('./public/lib');
 
 const {PACKETS, TRACKS, TEAMS} = constants;
 const PUBLIC = path.join(__dirname, 'public');
 const MIME = {'.html': 'text/html', '.css': 'text/css', '.js': 'text/javascript', '.svg': 'image/svg+xml'};
-const REC_MAX_BYTES = 500 * 1024 * 1024;
+const REC_MAX_BYTES = 500 * 1024 * 1024; // on disk, compressed: about 7 hours of a full online race
+const REC_FLUSH_MS = 2000; // a crash loses at most this much of a recording
 const MAX_COMPARE = 4;
 
 function localIps() {
@@ -139,7 +140,8 @@ function demoFrame(t) {
 }
 
 // Summary of a recording for the replay list: size, when it was recorded and how long it is. The header is the
-// first line; the length is the timestamp of the last packet line, read from the end of the file.
+// first line. A compressed recording's header has the length (filled in when it stopped; null if it never did);
+// a plain one's length is the timestamp of the last packet line, read from the end of the file.
 function describeRecording(dir, file) {
   const full = path.join(dir, file);
   let fd, st, out;
@@ -147,11 +149,16 @@ function describeRecording(dir, file) {
     st = fs.statSync(full);
     out = {file, bytes: st.size, modified: st.mtimeMs, startedAt: null, duration: null};
     fd = fs.openSync(full, 'r');
-    const head = Buffer.alloc(Math.min(1024, st.size));
+    const head = Buffer.alloc(Math.min(Math.max(1024, HEADER_BYTES), st.size));
     fs.readSync(fd, head, 0, head.length, 0);
-    const header = JSON.parse(head.toString('utf8').split('\n')[0]);
-    if (header.type !== 'f1rec') return null;
+    const found = readHeader(head);
+    if (!found) return null;
+    const header = found.header;
     out.startedAt = header.startedAt || null;
+    if (header.compression) {
+      out.duration = Number.isFinite(header.duration) ? header.duration : null;
+      return out;
+    }
     const size = Math.min(16384, st.size), tail = Buffer.alloc(size);
     fs.readSync(fd, tail, 0, size, st.size - size);
     const lines = tail.toString('utf8').split('\n').filter(Boolean);
@@ -175,7 +182,7 @@ function describeRecording(dir, file) {
 function listRecordings(dir) {
   let names = [];
   try {
-    names = fs.readdirSync(dir).filter(n => n.endsWith('.jsonl'));
+    names = fs.readdirSync(dir).filter(isRecordingName);
   } catch (err) {
     return [];
   }
@@ -196,6 +203,7 @@ function createDashboard(options = {}) {
     onIdle = null,
     recDir = path.join(__dirname, 'recordings'),
     recMaxBytes = REC_MAX_BYTES,
+    recFlushMs = REC_FLUSH_MS,
     broadcastMs = 33,
     log = console,
   } = options;
@@ -275,47 +283,53 @@ function createDashboard(options = {}) {
     return rivals.sort((a, b) => a.pos - b.pos);
   }
 
-  // --- Session recording: raw UDP packets as JSON lines [msSinceStart, base64] (replay with replay.js) ---
+  // --- Session recording: raw UDP packets, compressed as they arrive (format: replay.js; replay with replay.js) ---
   const rec = {stream: null, file: null, startedAt: 0, packets: 0, bytes: 0, lastFile: null, lastBytes: 0, lastPackets: 0};
 
   function startRecording() {
     if (rec.stream || demo) return;
     fs.mkdirSync(recDir, {recursive: true});
-    const name = `session-${new Date().toISOString().replace(/[:.]/g, '-')}.jsonl`;
+    const name = `session-${new Date().toISOString().replace(/[:.]/g, '-')}${REC_EXT}`;
     rec.file = path.join(recDir, name);
-    rec.stream = fs.createWriteStream(rec.file);
-    rec.stream.on('error', err => {
-      log.error(`Recording failed: ${err.message}`);
-      rec.stream = null;
-    });
     rec.startedAt = Date.now();
     rec.packets = 0;
-    rec.bytes = 0;
-    rec.stream.write(JSON.stringify({type: 'f1rec', version: 1, startedAt: new Date().toISOString(), udpPort}) + '\n');
+    rec.bytes = HEADER_BYTES;
+    const stream = createRecordingWriter(rec.file, {startedAt: new Date().toISOString(), udpPort}, {
+      flushMs: recFlushMs,
+      onBytes: n => {
+        rec.bytes = n;
+        if (n > recMaxBytes && rec.stream === stream) {
+          log.warn(`Recording hit the ${Math.round(recMaxBytes / 1048576)} MB limit, stopping`);
+          stopRecording();
+        }
+      },
+      onError: err => {
+        log.error(`Recording failed: ${err.message}`);
+        if (rec.stream === stream) rec.stream = null;
+      },
+    });
+    rec.stream = stream;
     log.log(`Recording to ${path.relative(__dirname, rec.file)}`);
   }
 
   function stopRecording() {
     if (!rec.stream) return Promise.resolve();
-    const stream = rec.stream;
+    const stream = rec.stream, file = rec.file;
     rec.stream = null;
-    rec.lastFile = path.relative(__dirname, rec.file);
+    rec.lastFile = path.relative(__dirname, file);
     rec.lastBytes = rec.bytes;
     rec.lastPackets = rec.packets;
-    log.log(`Saved ${rec.lastFile} (${rec.lastPackets} packets, ${(rec.lastBytes / 1048576).toFixed(1)} MB)`);
-    return new Promise(resolve => stream.end(resolve));
+    return stream.end().then(({bytes}) => {
+      // the last compressed block is only written when the file closes
+      if (rec.lastFile === path.relative(__dirname, file)) rec.lastBytes = bytes;
+      log.log(`Saved ${rec.lastFile} (${rec.lastPackets} packets, ${(bytes / 1048576).toFixed(1)} MB)`);
+    });
   }
 
   function recordPacket(msg) {
     if (!rec.stream) return;
-    const line = `[${Date.now() - rec.startedAt},"${msg.toString('base64')}"]\n`;
-    rec.stream.write(line);
+    rec.stream.write(Date.now() - rec.startedAt, msg);
     rec.packets++;
-    rec.bytes += line.length;
-    if (rec.bytes > recMaxBytes) {
-      log.warn(`Recording hit the ${Math.round(recMaxBytes / 1048576)} MB limit, stopping`);
-      stopRecording();
-    }
   }
 
   function recordingState() {
@@ -336,7 +350,7 @@ function createDashboard(options = {}) {
   const replays = new Set();
   async function openReplay(file) {
     const name = path.basename(String(file || ''));
-    if (!name.endsWith('.jsonl') || !fs.existsSync(path.join(recDir, name))) throw new Error('No such recording');
+    if (!isRecordingName(name) || !fs.existsSync(path.join(recDir, name))) throw new Error('No such recording');
     const dash = createDashboard({
       replayFile: path.join(recDir, name), httpPort: 0, udpPort: 0, recDir, log, broadcastMs,
       replayIdleMs, onIdle: () => { replays.delete(dash); dash.stop(); },
@@ -706,7 +720,7 @@ if (require.main === module) {
   const at = process.argv.indexOf('--replay');
   const replayFile = at >= 0 ? process.argv[at + 1] : null;
   if (at >= 0 && (!replayFile || replayFile.startsWith('--'))) {
-    console.error('Usage: node server.js --replay <recording.jsonl>');
+    console.error('Usage: node server.js --replay <recording.f1rec|.jsonl>');
     process.exit(1);
   }
   const dashboard = createDashboard({
