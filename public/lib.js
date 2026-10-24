@@ -165,6 +165,21 @@
   // file size for the replay list
   const fmtSize = bytes => (bytes >= 1073741824 ? `${(bytes / 1073741824).toFixed(1)} GB` : `${Math.max(0.1, bytes / 1048576).toFixed(1)} MB`);
 
+  const SESSION_NAMES = {
+    1: 'Practice 1', 2: 'Practice 2', 3: 'Practice 3', 4: 'Short Practice', 5: 'Qualifying 1', 6: 'Qualifying 2', 7: 'Qualifying 3',
+    8: 'Short Qualifying', 9: 'One-Shot Qualifying', 10: 'Sprint Shootout 1', 11: 'Sprint Shootout 2', 12: 'Sprint Shootout 3',
+    13: 'Short Sprint Shootout', 14: 'One-Shot Sprint Shootout', 15: 'Race', 16: 'Race 2', 17: 'Race 3', 18: 'Time Trial',
+  };
+  // header text for the session: its name, the lap (of the total in a race) and the time left when it is timed
+  function sessionLabel(se, lapNum) {
+    if (!se || !SESSION_NAMES[se.sessionType]) return '';
+    const race = RACE_SESSIONS.includes(se.sessionType);
+    const parts = [SESSION_NAMES[se.sessionType]];
+    if (lapNum > 0) parts.push(race && se.totalLaps > 0 ? `LAP ${lapNum}/${se.totalLaps}` : `LAP ${lapNum}`);
+    if (!race && se.timeLeft > 0) parts.push(`${fmtClock(se.timeLeft)} LEFT`);
+    return parts.join(' · ');
+  }
+
   // --- UDP format 2026 (F1 25: 2026 Season Pack) ---
   // ERS deploy mode label: mode 3 is "Overtake" in the 2025 format and "Boost" in 2026
   const ersModeName = (mode, format) => (mode === 3 && format >= 2026 ? 'Boost' : ERS_MODES[mode] || '');
@@ -204,7 +219,7 @@
   const aeroLabel = t2 => (t2 && t2.m_2026Regulations ? (t2.m_activeAeroMode === 1 ? 'STRAIGHT' : 'CORNER') : null);
 
   return {
-    ersModeName, zoneRanges, boostBadge, aeroLabel, overtakeOn, overtakeReady, lapTag, fmtSize,
+    ersModeName, zoneRanges, boostBadge, aeroLabel, overtakeOn, overtakeReady, sessionLabel, lapTag, fmtSize,
     WEATHER, ERS_MODES, COMPOUNDS, TYRES, CAR_PARTS, DMG_KEYS, DMG_COLORS, TRACK_BUCKET_M,
     tempColor, wearColor, dmgLevel, cap, fmtTime, fmtSector, fmtGap, esc, fmtClock, gapOk, leaderGap,
     learnTrack, recordLapTrace, nearest, metricValue, fmtMetric, fmtDelta,

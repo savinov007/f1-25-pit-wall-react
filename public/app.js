@@ -4,7 +4,7 @@ const {
   tempColor, wearColor, dmgLevel, cap, fmtTime, fmtSector, fmtGap, esc, fmtClock, gapOk, leaderGap,
   learnTrack, recordLapTrace, nearest, metricValue, fmtMetric, fmtDelta,
   tyreProjection, fmtLaps, lapsColor, fmtS, fmtRate, nameOf, rejoinEstimate, battleTrend,
-  ersModeName, zoneRanges, boostBadge, aeroLabel, overtakeReady, lapTag, fmtSize,
+  ersModeName, zoneRanges, boostBadge, aeroLabel, overtakeReady, sessionLabel, lapTag, fmtSize,
 } = PitLib;
 const ERS_MAX = 4000000;
 const TRACE_SECONDS = 10;
@@ -981,6 +981,9 @@ function render(s) {
   if (s.session) {
     const se = s.session;
     $('track').textContent = se.track;
+    const label = sessionLabel(se, s.lap && s.lap.m_currentLapNum);
+    $('sessChip').hidden = !label;
+    $('sessChip').textContent = label;
     $('weather').textContent = WEATHER[se.weather] || '—';
     $('trackTemp').textContent = se.trackTemp;
     $('airTemp').textContent = se.airTemp;

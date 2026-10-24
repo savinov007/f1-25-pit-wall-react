@@ -754,3 +754,5 @@ body.replaying #connText { color: var(--amber); }
 @keyframes batboostblue { 50% { box-shadow: 0 0 16px rgba(51, 214, 232, .8); } 0%, 100% { box-shadow: 0 0 5px rgba(51, 214, 232, .35); } }
 .bat:not(.ot).boost .batbody { border-color: var(--line2); }
 .batlbl[data-mode="boost"], .batlbl[data-mode="overtake"] { color: var(--cyan); }
+
+.chip.sess { color: var(--text); border-color: var(--line2); font-variant-numeric: tabular-nums; }

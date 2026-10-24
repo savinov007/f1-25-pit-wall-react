@@ -97,7 +97,7 @@ function demoFrame(t) {
   return {
     session: {
       track: 'Demo Circuit', trackId: -1, totalLaps: 30, trackLength: 5000, pitIdealLap: 14, pitLatestLap: 19, pitRejoinPos: 7,
-      weather: 0, trackTemp: 34, airTemp: 24, sessionType: 15, sessionUID: 'demo', packetFormat: 2026,
+      weather: 0, trackTemp: 34, airTemp: 24, sessionType: 15, timeLeft: 0, duration: 0, sessionUID: 'demo', packetFormat: 2026,
       aeroStatus: 0, aeroZones: [[0.02, 0.14], [0.45, 0.6]], drsZones: [[0.95, 0.04]], reactionTime: 0.214,
     },
     telemetry: {
@@ -573,6 +573,8 @@ function createDashboard(options = {}) {
           trackTemp: pk.m_trackTemperature,
           airTemp: pk.m_airTemperature,
           sessionType: pk.m_sessionType,
+          timeLeft: pk.m_sessionTimeLeft,
+          duration: pk.m_sessionDuration,
           sessionUID: uid,
           packetFormat: pk.m_header.m_packetFormat,
           aeroStatus: pk.m_activeAeroTrackStatus,
