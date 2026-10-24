@@ -671,3 +671,20 @@ describe('session time', () => {
     assert.equal(se.sessionType, 15);
   });
 });
+
+describe('player without a car', () => {
+  const f26 = require('./f1-2026');
+  const noCar = name => { const b = f26.build(name); b[27] = 255; return b; }; // m_playerCarIndex 255: spectating / in menus
+  test('packets with no player car index are handled, not skipped as unparsable', () => {
+    const warnings = [];
+    const d = offline({log: {log() {}, error() {}, warn: m => warnings.push(m)}});
+    ['participants', 'lapData', 'motion', 'carTelemetry', 'carTelemetry2', 'carStatus', 'carDamage', 'session'].forEach(n => d.handlePacket(noCar(n)));
+    assert.deepEqual(warnings, [], 'nothing skipped');
+    const s = d.refreshState();
+    for (const k of ['telemetry', 'telemetry2', 'lap', 'status', 'damage', 'motion']) assert.equal(s[k], null, `${k}: no player car`);
+    assert.equal(s.rivals.length, 24, 'the standings and map still work for every car');
+    assert.ok(Number.isFinite(s.rivals[3].x), 'rival positions still come through');
+    assert.equal(s.session.track, 'Madrid', 'session data is not tied to a car');
+    assert.equal(s.rivals.filter(r => r.player).length, 0);
+  });
+});
