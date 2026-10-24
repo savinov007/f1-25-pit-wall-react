@@ -994,3 +994,12 @@ describe('ERS mode label colours', () => {
     assert.equal(last('boost'), 'cyan');
   });
 });
+
+describe('compare and popup sizing', () => {
+  test('RPM and battery are sized up in compare columns and the popup', () => {
+    const css = require('fs').readFileSync(require('path').join(__dirname, '..', 'public', 'style.css'), 'utf8');
+    for (const re of [/\.ccrpm\s*\{\s*font-size:\s*clamp\(20px/, /\.ccspeed \.bat\s*\{\s*width:\s*clamp\(84px/, /\.dmbox \.bat\s*\{\s*width:\s*clamp\(90px/, /#dmRpm\s*\{\s*font-size:\s*clamp\(22px/]) {
+      assert.match(css, re);
+    }
+  });
+});

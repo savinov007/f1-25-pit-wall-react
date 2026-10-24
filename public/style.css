@@ -767,3 +767,16 @@ body.replaying #connText { color: var(--amber); }
 }
 
 .batlbl[data-mode="medium"] { color: var(--green); }
+
+/* bigger RPM and battery in compare mode and the rival popup */
+.ccrpm { font-size: clamp(20px, 4.2cqh, 34px); }
+.ccspeed .bat { width: clamp(84px, 24cqw, 120px); }
+.ccspeed .batbody { height: clamp(24px, 4.6cqh, 32px); }
+.ccspeed .batpct { font-size: clamp(13px, 2.4cqh, 17px); }
+.ccspeed .batlbl { font-size: clamp(11px, 2cqh, 14px); }
+.ccspeed .drs { width: 64px; font-size: 13px; }
+#dmRpm { font-size: clamp(22px, min(6cqh, 3.6cqw), 46px); }
+.dmbox .bat { width: clamp(90px, 15cqw, 140px); }
+.dmbox .batbody { height: clamp(26px, 5.4cqh, 38px); }
+.dmbox .batpct { font-size: clamp(14px, 2.8cqh, 20px); }
+.dmbox .batlbl { font-size: clamp(11px, 2.2cqh, 15px); }
