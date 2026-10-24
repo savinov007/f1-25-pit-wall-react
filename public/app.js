@@ -130,12 +130,13 @@ const mainDamage = createDamage($('dmg'));
 
 // --- Shared renderers for the dashboard and the driver modal ---
 // DRS badge (or overtake mode for 2026 cars), plus the active aero badge when there is one
-function renderBadges(drs, aero, t, t2, status) {
+function renderBadges(drs, aero, t, t2, status, bat) {
   const badge = boostBadge(t, t2, status);
+  // 2026 cars have no DRS: the battery shows the ERS charge and lights up while overtake mode is in use
+  drs.hidden = badge.label === 'OVERTAKE';
   drs.textContent = badge.label;
-  drs.title = badge.wait ? `Overtake mode available in ${badge.wait} m` : '';
   drs.classList.toggle('on', badge.on);
-  drs.classList.toggle('avail', badge.avail);
+  if (bat) renderBattery(bat, status, badge);
   if (!aero) return;
   const label = aeroLabel(t2);
   aero.hidden = !label;
@@ -145,11 +146,23 @@ function renderBadges(drs, aero, t, t2, status) {
   }
 }
 
+function renderBattery(bat, st, badge) {
+  bat.hidden = !st;
+  if (!st) return;
+  const pct = Math.max(0, Math.min(100, (st.m_ersStoreEnergy / ERS_MAX) * 100));
+  bat.querySelector('.batfill').style.width = pct + '%';
+  bat.querySelector('.batpct').textContent = Math.round(pct);
+  bat.classList.toggle('low', pct < 15);
+  const boosting = badge.on && badge.label === 'OVERTAKE'; // DRS on a pre-2026 car doesn't glow the battery
+  bat.classList.toggle('boost', boosting);
+  bat.title = `Battery ${Math.round(pct)}%` + (boosting ? ' · overtake mode in use' : badge.wait ? ` · overtake available in ${badge.wait} m` : '');
+}
+
 function renderDriving(t, prefix, trail, t2, status) {
   idFor(prefix, 'speed').textContent = t.m_speed;
   idFor(prefix, 'gear').textContent = t.m_gear === 0 ? 'N' : t.m_gear < 0 ? 'R' : t.m_gear;
   idFor(prefix, 'rpm').textContent = t.m_engineRPM;
-  renderBadges(idFor(prefix, 'drs'), idFor(prefix, 'aero'), t, t2, status);
+  renderBadges(idFor(prefix, 'drs'), idFor(prefix, 'aero'), t, t2, status, idFor(prefix, 'bat'));
   idFor(prefix, 'thr').style.height = t.m_throttle * 100 + '%';
   idFor(prefix, 'brk').style.height = t.m_brake * 100 + '%';
   idFor(prefix, 'steer').style.left = 50 + t.m_steer * 45 + '%';
@@ -594,7 +607,7 @@ function buildCompareCols() {
       <div class="ccspeed">
         <div><div class="lbl">GEAR</div><b class="ccgear">N</b></div>
         <div class="big"><b class="ccspd">0</b><div class="lbl">KM/H</div></div>
-        <div><div class="lbl">RPM</div><b class="ccrpm">0</b><div class="drs ccdrs">DRS</div></div>
+        <div><div class="lbl">RPM</div><b class="ccrpm">0</b><div class="drs ccdrs">DRS</div><div class="bat ccbat" hidden><div class="batrow"><div class="batbody"><i class="batfill"></i><span class="batpct">0</span></div><span class="batcap"></span></div><div class="batlbl">BOOST</div></div></div>
       </div>
       <div class="ccpedals">
         <div class="hb"><span>THR</span><div class="hbar"><i class="ccthr thr"></i></div><b class="ccthrv">0%</b></div>
@@ -619,7 +632,7 @@ function buildCompareCols() {
     box.appendChild(el);
     const q = c => el.querySelector('.' + c);
     const refs = {};
-    for (const c of ['ccpos', 'ccname', 'ccsub', 'ccteam', 'ccnote', 'ccgear', 'ccspd', 'ccrpm', 'ccdrs', 'ccthr', 'ccthrv', 'ccbrk', 'ccbrkv',
+    for (const c of ['ccpos', 'ccname', 'ccsub', 'ccteam', 'ccnote', 'ccgear', 'ccspd', 'ccrpm', 'ccdrs', 'ccbat', 'ccthr', 'ccthrv', 'ccbrk', 'ccbrkv',
       'ccgap', 'ccvsl', 'ccvs', 'cccur', 'cclast', 'ccbest', 'cclap', 'cccdot', 'cccname', 'cccage', 'ccfuel', 'ccfuell', 'ccfuelb',
       'ccers', 'ccersm', 'ccersb', 'ccstrat']) refs[c] = q(c);
     return {idx, el, refs, car: createCar(q('cctyrebox')), damage: createDamage(q('ccdmgbox'))};
@@ -682,7 +695,7 @@ function renderCompare(s) {
     f.ccspd.textContent = t.m_speed;
     f.ccgear.textContent = t.m_gear === 0 ? 'N' : t.m_gear < 0 ? 'R' : t.m_gear;
     f.ccrpm.textContent = t.m_engineRPM;
-    renderBadges(f.ccdrs, null, t, d.telemetry2, d.status);
+    renderBadges(f.ccdrs, null, t, d.telemetry2, d.status, f.ccbat);
     f.ccthr.style.width = t.m_throttle * 100 + '%';
     f.ccthrv.textContent = Math.round(t.m_throttle * 100) + '%';
     f.ccbrk.style.width = t.m_brake * 100 + '%';

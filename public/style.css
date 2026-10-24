@@ -718,3 +718,22 @@ body.replaying #connText { color: var(--amber); }
 .waitreplay { margin: 14px 0 0; padding: 10px 16px; cursor: pointer; font: 700 13px var(--f-display); letter-spacing: .16em; text-transform: uppercase;
   color: #1a1300; background: var(--amber); border: 0; border-radius: 8px; }
 .waitreplay:hover { filter: brightness(1.1); }
+
+/* battery gauge (ERS charge); glows green while overtake mode is in use */
+.bat { margin: 8px auto 0; width: 84px; }
+.batrow { display: flex; align-items: center; gap: 2px; }
+.batbody { position: relative; flex: 1; height: 26px; overflow: hidden; border: 1.5px solid var(--line2); border-radius: 6px; background: var(--inset); }
+.batfill { position: absolute; inset: 0 auto 0 0; width: 0; transition: width .25s; background: linear-gradient(90deg, #2a6bff, var(--cyan)); }
+.batbody::after { content: ""; position: absolute; inset: 0; pointer-events: none;
+  background: repeating-linear-gradient(90deg, transparent 0 calc(20% - 2px), var(--inset) calc(20% - 2px) 20%); }
+.batpct { position: absolute; inset: 0; z-index: 1; display: grid; place-items: center; font: 800 13px var(--f-mono); color: #fff; text-shadow: 0 1px 3px #000, 0 0 6px #000; }
+.batcap { width: 4px; height: 11px; border-radius: 0 2px 2px 0; background: var(--line2); }
+.batlbl { visibility: hidden; margin-top: 3px; font: 800 11px/1 var(--f-display); letter-spacing: .24em; color: var(--green); }
+.bat.low .batfill { background: linear-gradient(90deg, #b3201a, var(--red-hi)); }
+.bat.boost .batbody { border-color: var(--green); animation: batboost 1s ease-in-out infinite; }
+.bat.boost .batfill { background: linear-gradient(90deg, #12a550, var(--green)); }
+.bat.boost .batcap { background: var(--green); }
+.bat.boost .batlbl { visibility: visible; }
+@keyframes batboost { 50% { box-shadow: 0 0 16px rgba(31, 209, 102, .75); } 0%, 100% { box-shadow: 0 0 5px rgba(31, 209, 102, .35); } }
+.dmbox .bat { width: 70px; } .dmbox .batbody { height: 22px; }
+.ccspeed .bat { width: 56px; } .ccspeed .batbody { height: 18px; } .ccspeed .batpct { font-size: 10px; } .ccspeed .batlbl { font-size: 9px; letter-spacing: .16em; }
