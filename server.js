@@ -484,6 +484,9 @@ function createDashboard(options = {}) {
     }
   }
 
+  // the player's own entry in a per-car array, or null when the player has no car (spectating, menus: index 255)
+  const mine = (list, i, fn = c => ({...c})) => (list && list[i] ? fn(list[i]) : null);
+
   function onPlayer(packet, key, pick) {
     packetCount++;
     lastPacketAt = Date.now();
@@ -514,22 +517,22 @@ function createDashboard(options = {}) {
     client.handleMessage = handlePacket;
     client.on(PACKETS.carTelemetry, p => {
       raw.tel = p.m_carTelemetryData;
-      onPlayer(p, 'telemetry', (pk, i) => ({...pk.m_carTelemetryData[i]}));
+      onPlayer(p, 'telemetry', (pk, i) => mine(pk.m_carTelemetryData, i));
     });
     client.on(PACKETS.lapData, p => {
       raw.lap = p.m_lapData;
       strategy.update(raw.lap, raw.dmg, raw.status, state.session && state.session.trackLength);
       raw.playerIdx = p.m_header.m_playerCarIndex;
-      onPlayer(p, 'lap', (pk, i) => ({...pk.m_lapData[i]}));
+      onPlayer(p, 'lap', (pk, i) => mine(pk.m_lapData, i));
     });
     // UDP format 2026 only: active aero, overtake mode, wrong way
     client.on(PACKETS.carTelemetry2, p => {
       raw.tel2 = p.m_carTelemetry2Data;
-      onPlayer(p, 'telemetry2', (pk, i) => ({...pk.m_carTelemetry2Data[i]}));
+      onPlayer(p, 'telemetry2', (pk, i) => mine(pk.m_carTelemetry2Data, i));
     });
     client.on(PACKETS.carStatus, p => {
       raw.status = p.m_carStatusData;
-      onPlayer(p, 'status', (pk, i) => ({...pk.m_carStatusData[i]}));
+      onPlayer(p, 'status', (pk, i) => mine(pk.m_carStatusData, i));
     });
     client.on(PACKETS.sessionHistory, p => {
       const lapNum = p.m_bestLapTimeLapNum;
@@ -543,14 +546,12 @@ function createDashboard(options = {}) {
     });
     client.on(PACKETS.carDamage, p => {
       raw.dmg = p.m_carDamageData;
-      onPlayer(p, 'damage', (pk, i) => ({...pk.m_carDamageData[i]}));
+      onPlayer(p, 'damage', (pk, i) => mine(pk.m_carDamageData, i));
     });
     client.on(PACKETS.motion, p => {
       raw.mot = p.m_carMotionData;
-      onPlayer(p, 'motion', (pk, i) => {
-        const m = pk.m_carMotionData[i];
-        return {x: m.m_worldPositionX, z: m.m_worldPositionZ, gLat: m.m_gForceLateral, gLong: m.m_gForceLongitudinal};
-      });
+      onPlayer(p, 'motion', (pk, i) =>
+        mine(pk.m_carMotionData, i, m => ({x: m.m_worldPositionX, z: m.m_worldPositionZ, gLat: m.m_gForceLateral, gLong: m.m_gForceLongitudinal})));
     });
     client.on(PACKETS.session, p =>
       onPlayer(p, 'session', pk => {
