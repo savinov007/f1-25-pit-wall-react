@@ -502,39 +502,42 @@ describe('F1 26 (UDP format 2026)', () => {
     m_activeAeroMode: 0, m_activeAeroAvailable: 1, m_activeAeroActivationDistance: 0, m_overtakeAvailable: 0,
     m_overtakeActive: 0, m_overtakeActivationDistance: 0, m_2026Regulations: 1, m_drivingWrongWay: 0, ...o,
   });
-  test('overtake mode replaces DRS, with active aero mode', async () => {
+  test('2026 cars show a battery instead of DRS; it glows only while overtake is in use', async () => {
     const p = await boot();
     const base = dashboardState();
-    const status = mode => ({...base.status, m_ersDeployMode: mode});
-    // flags set, Boost in use: on
+    const status = (mode, store = 2000000) => ({...base.status, m_ersDeployMode: mode, m_ersStoreEnergy: store});
+    const bat = p.$('bat');
     p.push({...base, status: status(3), telemetry2: t2({m_overtakeAvailable: 1, m_overtakeActive: 1, m_activeAeroMode: 1})});
-    assert.equal(p.$('drs').textContent, 'OVERTAKE');
-    assert.equal(p.$('drs').classList.contains('on'), true);
-    assert.equal(p.$('aero').hidden, false);
+    assert.equal(p.$('drs').hidden, true, 'no overtake badge');
+    assert.equal(bat.hidden, false);
+    assert.equal(bat.querySelector('.batpct').textContent, '50');
+    assert.equal(bat.querySelector('.batfill').style.width, '50%');
+    assert.equal(bat.classList.contains('boost'), true);
+    assert.match(bat.title, /overtake mode in use/);
     assert.equal(p.$('aero').textContent, 'STRAIGHT');
     assert.equal(p.$('aero').classList.contains('on'), true);
-    // the game sets available = active for the whole race: without Boost that is only "available", never "on"
+    // regression: the game sets available = active all race; without Boost the battery stays calm
     p.push({...base, status: status(1), telemetry2: t2({m_overtakeAvailable: 1, m_overtakeActive: 1})});
-    assert.equal(p.$('drs').classList.contains('on'), false, 'regression: was always lit');
-    assert.equal(p.$('drs').classList.contains('avail'), true);
+    assert.equal(bat.classList.contains('boost'), false);
     assert.equal(p.$('aero').textContent, 'CORNER');
     assert.equal(p.$('aero').classList.contains('on'), false);
-    // countdown to availability
     p.push({...base, status: status(3), telemetry2: t2({m_overtakeAvailable: 1, m_overtakeActive: 1, m_overtakeActivationDistance: 150})});
-    assert.equal(p.$('drs').classList.contains('on'), false);
-    assert.equal(p.$('drs').classList.contains('avail'), false);
-    assert.equal(p.$('drs').title, 'Overtake mode available in 150 m');
-    // mode not enabled
-    p.push({...base, status: status(1), telemetry2: t2({})});
-    assert.equal(p.$('drs').classList.contains('avail'), false);
-    assert.equal(p.$('drs').title, '');
+    assert.equal(bat.classList.contains('boost'), false, 'countdown running');
+    assert.match(bat.title, /available in 150 m/);
+    p.push({...base, status: status(1, 300000), telemetry2: t2({})});
+    assert.equal(bat.classList.contains('low'), true, 'under 15% turns red');
+    p.push({...base, status: status(1, 9e9), telemetry2: t2({})});
+    assert.equal(bat.querySelector('.batfill').style.width, '100%', 'clamped');
     // aero does not need m_activeAeroAvailable
     p.push({...base, telemetry2: t2({m_activeAeroAvailable: 0, m_activeAeroMode: 1})});
     assert.equal(p.$('aero').textContent, 'STRAIGHT');
     p.push({...base, telemetry2: t2({m_2026Regulations: 0})});
     assert.equal(p.$('aero').hidden, true);
-    p.push(dashboardState({telemetry2: null}));
-    assert.equal(p.$('aero').hidden, true);
+    assert.equal(p.$('drs').hidden, false, 'pre-2026 cars keep DRS');
+    assert.equal(p.$('drs').textContent, 'DRS');
+    assert.equal(bat.hidden, false, 'battery still shown');
+    p.push(dashboardState({telemetry2: null, status: null}));
+    assert.equal(bat.hidden, true, 'no status, no battery');
     p.close();
   });
   test('wrong-way warning, reaction time, format chip and ERS boost', async () => {
@@ -561,20 +564,25 @@ describe('F1 26 (UDP format 2026)', () => {
     assert.match(rows[8].querySelector('.n').textContent, /WRONG WAY/);
     p.close();
   });
-  test('the rival popup and compare columns show the same badges', async () => {
+  test('the rival popup and compare columns show the same battery', async () => {
     const p = await boot();
     const s = dashboardState();
+    const boosting = d => ({...d, status: {...d.status, m_ersDeployMode: 3, m_ersStoreEnergy: 1000000}});
     p.push(s);
     p.pointer(p.doc.querySelectorAll('.srow')[1], 'pointerdown');
-    p.push({...s, detail: {...detailFor(s, 1), telemetry2: t2({m_overtakeActive: 1, m_activeAeroMode: 1})}});
-    assert.equal(p.$('dmDrs').textContent, 'OVERTAKE');
+    p.push({...s, detail: boosting({...detailFor(s, 1), telemetry2: t2({m_overtakeActive: 1, m_activeAeroMode: 1})})});
+    assert.equal(p.$('dmDrs').hidden, true);
+    assert.equal(p.$('dmBat').classList.contains('boost'), true);
+    assert.equal(p.$('dmBat').querySelector('.batpct').textContent, '25');
     assert.equal(p.$('dmAero').textContent, 'STRAIGHT');
     p.key(p.doc, 'Escape');
     p.$('compareBtn').click();
-    p.push({...s, compare: [{...detailFor(s, 2), telemetry2: t2({m_overtakeAvailable: 1})}, {...detailFor(s, 1), telemetry2: null}]});
+    p.push({...s, compare: [boosting({...detailFor(s, 2), telemetry2: t2({m_overtakeActive: 1})}), {...detailFor(s, 1), telemetry2: null}]});
     const [you, nor] = [...p.doc.querySelectorAll('.cc')];
-    assert.equal(you.querySelector('.ccdrs').textContent, 'OVERTAKE');
-    assert.equal(you.querySelector('.ccdrs').classList.contains('avail'), true);
+    assert.equal(you.querySelector('.ccbat').classList.contains('boost'), true);
+    assert.equal(you.querySelector('.ccdrs').hidden, true);
+    assert.equal(nor.querySelector('.ccbat').classList.contains('boost'), false);
+    assert.equal(nor.querySelector('.ccdrs').hidden, false);
     assert.equal(nor.querySelector('.ccdrs').textContent, 'DRS');
     p.close();
   });
