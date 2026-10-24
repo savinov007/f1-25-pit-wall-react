@@ -2,7 +2,7 @@
 
 A live telemetry dashboard for **F1 25** and **F1 26** (the F1 25 2026 Season Pack, UDP Format 2026), built on the UDP parser library below. Point the game's telemetry at your machine, open `http://localhost:3000`, and get a pit wall in the browser: driving traces, tyres and damage, lap timing, a track map built from the cars' own positions, standings with strategy models, and per-driver telemetry for everyone on track.
 
-![Dashboard](docs/dashboard.png?v=2)
+![Dashboard](docs/dashboard.png?v=3)
 
 ## Quick start
 
@@ -15,7 +15,7 @@ $ npm run replay:dash -- recordings/<file>.jsonl   # play back a recording
 
 Then open http://localhost:3000. The first screen asks which format the game sends (F1 26 / UDP Format 2026, or F1 25) and shows the settings to enter in the game: **Settings → Telemetry Settings**, UDP Telemetry **On**, your machine's IP address (or `127.0.0.1` if the game runs on the same machine), port **20777**, 20 Hz.
 
-![Waiting screen](docs/waiting.png?v=2)
+![Waiting screen](docs/waiting.png?v=3)
 
 ## Features
 
@@ -31,17 +31,21 @@ Then open http://localhost:3000. The first screen asks which format the game sen
 - **Recording and replay**: the REC button saves the raw packets; the **Replays** button lists saved recordings and opens one in a new tab with a floating player (play / pause, seek, ±10 s, loop, 0.25× to 10×).
 - **F1 26 support**: 24 cars, 16-bit team IDs (including Audi and Cadillac), quantised g-forces, active aero, overtake mode, the new events and the Madrid circuit. Parsed against the official spec, byte for byte.
 
-![Rival popup](docs/rival-popup.png?v=2)
+![Rival popup](docs/rival-popup.png?v=3)
 
-![Compare mode](docs/compare.png?v=2)
+![Compare mode](docs/compare.png?v=3)
+
+Switch the chart to **lap distance** to line the drivers up corner by corner, here comparing throttle over the last lap:
+
+![Compare mode, throttle by lap distance](docs/compare-lap.png?v=3)
 
 ### Replay
 
 Recordings are written to `recordings/` (git-ignored). Open the list from the header's **Replays** button (or the waiting screen), pick one, and it plays in a new tab:
 
-![Saved replays](docs/replays.png?v=2)
+![Saved replays](docs/replays.png?v=3)
 
-![Replay mode](docs/replay.png?v=2)
+![Replay mode](docs/replay.png?v=3)
 
 You can also start one from the command line with `npm run replay:dash -- recordings/<file>.jsonl`, or send a recording to a running dashboard over UDP with `npm run replay -- recordings/<file>.jsonl [--speed 2] [--loop]`.
 

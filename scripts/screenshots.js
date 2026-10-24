@@ -67,6 +67,14 @@ async function main() {
     await sleep(COMPARE_MS);
     await shot('compare.png');
 
+    // the same drivers plotted by lap distance (throttle, last lap) once each has a completed lap
+    await js('document.querySelector("#cmpAxis [data-a=dist]").click(); document.querySelector("#cmpLap [data-l=last]").click(); document.querySelector("#cmpMetric [data-m=thr]").click()');
+    // 'last' must cover (nearly) the whole 5 km demo lap, not just the part seen after the page loaded mid-lap
+    const fullLap = '[0, 1, 2].every(i => { const t = lapTraces.get(i); return t && t.last && t.last.length > 20 && t.last[t.last.length - 1].d - t.last[0].d > 4500; })';
+    for (let i = 0; i < 120 && !(await js(fullLap)); i++) await sleep(1000);
+    await sleep(500);
+    await shot('compare-lap.png');
+
     // waiting screen with the format picker
     await open(live.ports.http);
     // show a placeholder instead of this machine's real LAN address, and the default port
