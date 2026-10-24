@@ -141,6 +141,26 @@ describe('lap-synced traces', () => {
   });
 });
 
+describe('battery traces', () => {
+  const tel = speed => ({m_speed: speed, m_throttle: 1, m_brake: 0, m_gear: 5});
+  const st = (store, mode) => ({m_ersStoreEnergy: store, m_ersDeployMode: mode});
+  const lap = (n, d) => ({m_currentLapNum: n, m_lapDistance: d});
+  test('samples carry the battery charge (clamped 0..1) and deploy mode', () => {
+    const traces = new Map();
+    L.recordLapTrace(traces, 0, tel(100), lap(1, 0), st(1000000, 3));
+    L.recordLapTrace(traces, 0, tel(100), lap(1, 10), st(9e9, 1));
+    L.recordLapTrace(traces, 0, tel(100), lap(1, 20));
+    assert.deepEqual(traces.get(0).cur.map(p => [p.ers, p.mode]), [[0.25, 3], [1, 1], [null, null]], 'no status yet: unknown, not empty');
+  });
+  test('battery metrics are labelled', () => {
+    assert.equal(L.fmtMetric(0.5, 'ers'), '50%');
+    assert.equal(L.fmtMetric(2, 'mode'), 'Hotlap');
+    assert.equal(L.fmtMetric(3, 'mode', 2026), 'Boost');
+    assert.equal(L.fmtMetric(9, 'mode'), '–');
+    assert.equal(L.fmtDelta(-0.25, 'ers'), '−25%');
+  });
+});
+
 describe('chart helpers', () => {
   const pts = [0, 10, 20, 30].map(d => ({d}));
   test('nearest sample by binary search', () => {

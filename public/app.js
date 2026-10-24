@@ -2,7 +2,7 @@ const $ = id => document.getElementById(id);
 const {
   WEATHER, ERS_MODES, COMPOUNDS, TYRES, CAR_PARTS, DMG_KEYS, DMG_COLORS, TRACK_BUCKET_M,
   tempColor, wearColor, dmgLevel, cap, fmtTime, fmtSector, fmtGap, esc, fmtClock, gapOk, leaderGap,
-  learnTrack, recordLapTrace, nearest, metricValue, fmtMetric, fmtDelta,
+  learnTrack, recordLapTrace, traceSample, nearest, metricValue, fmtMetric, fmtDelta,
   tyreProjection, fmtLaps, lapsColor, fmtS, fmtRate, nameOf, rejoinEstimate, battleTrend,
   ersModeName, zoneRanges, boostBadge, aeroLabel, overtakeReady, sessionLabel, lapTag, fmtSize,
 } = PitLib;
@@ -499,6 +499,8 @@ $('rec').onclick = () => {
 };
 
 // --- Compare mode: up to 4 drivers side by side, plus one overlaid trace chart ---
+// ERS deploy mode axis labels, short enough for the chart's left margin
+const modeTick = (mode, format) => ['NONE', 'MED', 'HOT', format >= 2026 ? 'BOOST' : 'OT'][mode];
 const SLOT_COLORS = ['#ff2d1f', '#3aa0ff', '#ffb020', '#1fd166'];
 const CMP_SECONDS = 20;
 const cmp = $('cmp');
@@ -659,10 +661,10 @@ function renderCompare(s) {
     if (!d.telemetry) continue;
     const trail = cmpTrails.get(d.idx) || [];
     const t = d.telemetry;
-    trail.push({t: now, speed: t.m_speed, thr: t.m_throttle, brk: t.m_brake, gear: t.m_gear});
+    trail.push({t: now, ...traceSample(t, d.status)});
     while (trail.length && now - trail[0].t > CMP_SECONDS * 1000) trail.shift();
     cmpTrails.set(d.idx, trail);
-    if (d.lap) recordLapTrace(lapTraces, d.idx, t, d.lap);
+    if (d.lap) recordLapTrace(lapTraces, d.idx, t, d.lap, d.status);
   }
 
   // best values across the compared drivers get highlighted
@@ -746,6 +748,7 @@ function drawCompareChart() {
     const lt = lapTraces.get(c.idx);
     return lt ? (cmpLapView === 'last' ? lt.last : lt.cur) : [];
   });
+  const format = latest && latest.session && latest.session.packetFormat;
   const field = byDist ? 'd' : 't';
   let xMin, xMax;
   if (byDist) {
@@ -757,7 +760,7 @@ function drawCompareChart() {
     xMax = now; xMin = now - CMP_SECONDS * 1000;
   }
 
-  let max = cmpMetric === 'speed' ? 350 : cmpMetric === 'gear' ? 8 : 1;
+  let max = cmpMetric === 'speed' ? 350 : cmpMetric === 'gear' ? 8 : cmpMetric === 'mode' ? 3 : 1;
   if (cmpMetric === 'speed') for (const pts of series) for (const p of pts) max = Math.max(max, p.speed);
   const padL = 44, padR = 8, padT = 8, padB = 18, plotW = w - padL - padR, plotH = h - padT - padB;
   const xOf = v => padL + ((v - xMin) / (xMax - xMin)) * plotW;
@@ -766,11 +769,11 @@ function drawCompareChart() {
   // grid + axis labels
   ctx.font = `600 10px ${DISPLAY_FONT}`; ctx.fillStyle = '#7a8195'; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
   ctx.strokeStyle = '#171a24'; ctx.lineWidth = 1;
-  const ticks = cmpMetric === 'gear' ? [0, 2, 4, 6, 8] : [0, .25, .5, .75, 1].map(f => f * max);
+  const ticks = cmpMetric === 'gear' ? [0, 2, 4, 6, 8] : cmpMetric === 'mode' ? [0, 1, 2, 3] : [0, .25, .5, .75, 1].map(f => f * max);
   for (const v of ticks) {
     const y = Math.round(yOf(v)) + .5;
     ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(w - padR, y); ctx.stroke();
-    ctx.fillText(cmpMetric === 'speed' ? Math.round(v) : cmpMetric === 'gear' ? v : Math.round(v * 100) + '%', padL - 8, y);
+    ctx.fillText(cmpMetric === 'speed' ? Math.round(v) : cmpMetric === 'gear' ? v : cmpMetric === 'mode' ? modeTick(v, format) : Math.round(v * 100) + '%', padL - 8, y);
   }
   ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
   if (byDist) {
@@ -788,13 +791,20 @@ function drawCompareChart() {
   series.forEach((pts, k) => {
     if (pts.length < 2) return;
     ctx.beginPath();
-    let started = false;
+    let started = false, prevY = 0;
     for (let i = 0; i < pts.length; i++) {
       const p = pts[i];
       // don't join across gaps in the recorded lap (we joined mid-lap, or skipped samples)
       const gap = byDist && i && p.d - pts[i - 1].d > 60;
-      const x = xOf(p[field]), y = yOf(metricValue(p, cmpMetric));
-      if (!started || gap) { ctx.moveTo(x, y); started = true; } else ctx.lineTo(x, y);
+      const v = metricValue(p, cmpMetric);
+      if (v == null) { started = false; continue; } // unknown here (no battery data yet): leave a gap
+      const x = xOf(p[field]), y = yOf(v);
+      if (!started || gap) { ctx.moveTo(x, y); started = true; }
+      else {
+        if (cmpMetric === 'mode') ctx.lineTo(x, prevY); // deploy mode is a step, not a ramp
+        ctx.lineTo(x, y);
+      }
+      prevY = y;
     }
     ctx.strokeStyle = SLOT_COLORS[k]; ctx.lineWidth = 2; ctx.lineJoin = 'round';
     ctx.shadowColor = SLOT_COLORS[k]; ctx.shadowBlur = 6; ctx.stroke(); ctx.shadowBlur = 0;
@@ -844,9 +854,11 @@ function drawCompareChart() {
     ctx.fillStyle = SLOT_COLORS[r.k]; ctx.fillRect(bx + 10, y - 8, 3, 10);
     ctx.fillStyle = '#eceef3'; ctx.textAlign = 'left'; ctx.fillText(r.name, bx + 18, y);
     ctx.textAlign = 'right';
-    const val = r.v == null ? '–' : fmtMetric(r.v, cmpMetric);
-    ctx.fillText(val, bx + boxW - (r.k && refVal != null && r.v != null ? 58 : 10), y);
-    if (r.k && refVal != null && r.v != null) {
+    const val = r.v == null ? '–' : fmtMetric(r.v, cmpMetric, format);
+    // no delta for the deploy mode: it is a category, "+1 mode" means nothing
+    const withDelta = r.k && refVal != null && r.v != null && cmpMetric !== 'mode';
+    ctx.fillText(val, bx + boxW - (withDelta ? 58 : 10), y);
+    if (withDelta) {
       const dlt = r.v - refVal;
       ctx.fillStyle = dlt > 0 ? '#1fd166' : dlt < 0 ? '#ff2d1f' : '#7a8195';
       if (cmpMetric === 'brk') ctx.fillStyle = '#7a8195';

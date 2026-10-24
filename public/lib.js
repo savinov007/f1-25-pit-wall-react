@@ -70,7 +70,14 @@
   }
 
   // --- Compare chart: lap-synced traces, samples keyed by lap distance ---
-  function recordLapTrace(traces, idx, t, lap) {
+  const ERS_MAX = 4000000;
+  // one chart sample: pedals, gear and the battery (charge 0..1 and deploy mode). Without a status packet yet
+  // (it can arrive after the first telemetry) the battery is unknown (null), not an empty battery.
+  const traceSample = (t, st) => ({
+    speed: t.m_speed, thr: t.m_throttle, brk: t.m_brake, gear: t.m_gear,
+    ers: st ? Math.max(0, Math.min(1, st.m_ersStoreEnergy / ERS_MAX)) : null, mode: st ? st.m_ersDeployMode : null,
+  });
+  function recordLapTrace(traces, idx, t, lap, st) {
     const dist = lap.m_lapDistance, lapNum = lap.m_currentLapNum;
     let lt = traces.get(idx);
     if (!lt) { lt = {lap: lapNum, cur: [], last: [], lastLap: null}; traces.set(idx, lt); }
@@ -87,9 +94,7 @@
       lt.cur = lt.cur.filter(p => p.d <= dist);
       prev = lt.cur[lt.cur.length - 1];
     }
-    if (!prev || dist - prev.d >= 2) {
-      lt.cur.push({d: dist, speed: t.m_speed, thr: t.m_throttle, brk: t.m_brake, gear: t.m_gear});
-    }
+    if (!prev || dist - prev.d >= 2) lt.cur.push({d: dist, ...traceSample(t, st)});
     return lt;
   }
 
@@ -105,7 +110,8 @@
     return Math.abs(a[field] - key) <= Math.abs(b[field] - key) ? a : b;
   }
   const metricValue = (p, m) => (m === 'gear' ? Math.max(0, p.gear) : p[m]);
-  const fmtMetric = (v, m) => (m === 'speed' ? Math.round(v) + ' km/h' : m === 'gear' ? (v ? String(v) : 'N') : Math.round(v * 100) + '%');
+  const fmtMetric = (v, m, format) =>
+    m === 'speed' ? Math.round(v) + ' km/h' : m === 'gear' ? (v ? String(v) : 'N') : m === 'mode' ? ersModeName(v, format) || '–' : Math.round(v * 100) + '%';
   const fmtDelta = (v, m) => {
     const sign = v > 0 ? '+' : v < 0 ? '−' : '±';
     const abs = Math.abs(v);
@@ -222,7 +228,7 @@
     ersModeName, zoneRanges, boostBadge, aeroLabel, overtakeOn, overtakeReady, sessionLabel, lapTag, fmtSize,
     WEATHER, ERS_MODES, COMPOUNDS, TYRES, CAR_PARTS, DMG_KEYS, DMG_COLORS, TRACK_BUCKET_M,
     tempColor, wearColor, dmgLevel, cap, fmtTime, fmtSector, fmtGap, esc, fmtClock, gapOk, leaderGap,
-    learnTrack, recordLapTrace, nearest, metricValue, fmtMetric, fmtDelta,
+    learnTrack, recordLapTrace, traceSample, nearest, metricValue, fmtMetric, fmtDelta,
     tyreProjection, fmtLaps, lapsColor, fmtS, fmtRate, nameOf, rejoinEstimate, battleTrend,
   };
 });

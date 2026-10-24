@@ -378,6 +378,60 @@ describe('compare mode', () => {
     assert.match(text(you.querySelector('.ccstrat')), /^Strategy/);
     p.close();
   });
+  // compare chart drawing: a sized canvas, the canvas calls it made, and recorded laps set on the page directly
+  async function chartPage() {
+    const p = await boot();
+    const s = dashboardState();
+    p.push(s);
+    p.$('compareBtn').click();
+    const cv = p.$('cmpCanvas');
+    Object.defineProperty(cv, 'clientWidth', {value: 600});
+    Object.defineProperty(cv, 'clientHeight', {value: 200});
+    p.$('cmpAxis').querySelector('[data-a=dist]').click();
+    const draw = () => { p.drawLog.length = 0; p.eval('drawCompareChart()'); };
+    const labels = () => p.drawLog.filter(c => c[0] === 'fillText').map(c => c[1]);
+    const setLaps = (idx, lt) => p.eval(`lapTraces.set(${idx}, ${JSON.stringify({lap: 99, cur: [], last: [], lastLap: null, ...lt})})`);
+    return {p, draw, labels, setLaps};
+  }
+  const pt = (d, mode = 2, ers = 0.5) => ({d, speed: 200, thr: 1, brk: 0, gear: 6, ers, mode});
+  test('compare draws the battery and ERS mode charts', async () => {
+    const {p, draw, labels, setLaps} = await chartPage();
+    // a step: two lineTo calls in a row at the same x (across, then straight up or down)
+    const steps = () => p.drawLog.filter((c, i) => i && c[0] === 'lineTo' && p.drawLog[i - 1][0] === 'lineTo' && c[1] === p.drawLog[i - 1][1] && c[2] !== p.drawLog[i - 1][2]).length;
+    p.$('cmpLap').querySelector('[data-l=last]').click();
+    setLaps(2, {last: [pt(0, 1), pt(50, 1), pt(100, 3)], lastLap: 3});
+    p.$('cmpMetric').querySelector('[data-m=ers]').click();
+    draw();
+    assert.ok(labels().includes('50%'), 'battery axis in percent');
+    assert.equal(steps(), 0, 'the battery charge is a plain line');
+    p.$('cmpMetric').querySelector('[data-m=mode]').click();
+    draw();
+    assert.deepEqual(labels().filter(l => ['NONE', 'MED', 'HOT', 'BOOST', 'OT'].includes(l)), ['NONE', 'MED', 'HOT', 'BOOST'], 'short labels, 2026 names');
+    assert.equal(steps(), 1, 'the deploy mode changes as a step, not a ramp');
+
+    // hovering both drivers: values, but no meaningless "+1" for a category
+    setLaps(1, {last: [pt(0), pt(50), pt(100)], lastLap: 3});
+    p.eval('cmpHoverX = 46'); // just after the line, where the test laps have samples
+    draw();
+    assert.ok(labels().includes('Hotlap'), 'the hover readout names the mode');
+    assert.ok(!labels().some(l => /^[+−±]\d/.test(l)), 'no delta for the deploy mode');
+    p.$('cmpMetric').querySelector('[data-m=ers]').click();
+    draw();
+    assert.ok(labels().includes('±0%'), 'the battery does get a delta');
+
+    // before the first status packet the battery is unknown: the line breaks there instead of dropping to 0 %
+    p.eval('cmpHoverX = null');
+    const moveTos = () => p.drawLog.filter(c => c[0] === 'moveTo').length;
+    setLaps(1, {last: []});
+    setLaps(2, {last: [pt(0), pt(20), pt(40), pt(60)]});
+    draw();
+    const whole = moveTos();
+    setLaps(2, {last: [pt(0), {...pt(20), ers: null, mode: null}, pt(40), pt(60)]});
+    draw();
+    assert.equal(moveTos(), whole + 1, 'one break in the line');
+    assert.ok(!p.drawLog.some(c => (c[0] === 'lineTo' || c[0] === 'moveTo') && Number.isNaN(c[2])), 'no NaN points');
+    p.close();
+  });
   test('chart toggles and lap-synced traces', async () => {
     const p = await boot();
     const s = dashboardState();
