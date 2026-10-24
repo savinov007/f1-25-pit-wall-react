@@ -77,16 +77,27 @@
     speed: t.m_speed, thr: t.m_throttle, brk: t.m_brake, gear: t.m_gear,
     ers: st ? Math.max(0, Math.min(1, st.m_ersStoreEnergy / ERS_MAX)) : null, mode: st ? st.m_ersDeployMode : null,
   });
+  // a lap trace good enough to be a best-lap reference: starts at the line and has no holes
+  // (joining mid-lap, or a replay seek, leaves part of the lap unrecorded)
+  const LAP_HOLE_M = 200;
+  const wholeLap = pts => pts.length > 20 && pts[0].d <= LAP_HOLE_M && pts.every((p, i) => !i || p.d - pts[i - 1].d <= LAP_HOLE_M);
   function recordLapTrace(traces, idx, t, lap, st) {
     const dist = lap.m_lapDistance, lapNum = lap.m_currentLapNum;
     let lt = traces.get(idx);
-    if (!lt) { lt = {lap: lapNum, cur: [], last: [], lastLap: null}; traces.set(idx, lt); }
+    if (!lt) { lt = {lap: lapNum, cur: [], last: [], lastLap: null, best: [], bestLap: null, bestTime: 0, invalid: false}; traces.set(idx, lt); }
     if (lapNum !== lt.lap) {
       // keep the finished lap only if it was mostly recorded (we may have joined mid-lap)
       if (lt.cur.length > 20) { lt.last = lt.cur; lt.lastLap = lt.lap; }
+      // the best lap: fastest fully recorded valid lap, timed by the game (this packet's last lap time)
+      const time = lap.m_lastLapTimeInMS;
+      if (time > 0 && !lt.invalid && (!lt.bestTime || time < lt.bestTime) && wholeLap(lt.cur)) {
+        lt.best = lt.cur; lt.bestLap = lt.lap; lt.bestTime = time;
+      }
       lt.cur = [];
       lt.lap = lapNum;
+      lt.invalid = false;
     }
+    if (lap.m_currentLapInvalid) lt.invalid = true; // cut a corner: the lap can't be the best
     if (!(dist >= 0)) return lt; // before the start line on lap 1
     let prev = lt.cur[lt.cur.length - 1];
     if (prev && dist < prev.d - 30) {

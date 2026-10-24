@@ -746,7 +746,7 @@ function drawCompareChart() {
   const series = cmpCols.map(c => {
     if (!byDist) return cmpTrails.get(c.idx) || [];
     const lt = lapTraces.get(c.idx);
-    return lt ? (cmpLapView === 'last' ? lt.last : lt.cur) : [];
+    return lt ? lt[cmpLapView] || [] : []; // 'cur' | 'last' | 'best'
   });
   const format = latest && latest.session && latest.session.packetFormat;
   const field = byDist ? 'd' : 't';
@@ -812,7 +812,7 @@ function drawCompareChart() {
 
   if (byDist && series.every(p => p.length < 2)) {
     ctx.fillStyle = '#7a8195'; ctx.textAlign = 'center'; ctx.font = `600 12px ${DISPLAY_FONT}`;
-    ctx.fillText(cmpLapView === 'last' ? 'NO COMPLETED LAP RECORDED YET — KEEP COMPARE OPEN FOR A FULL LAP' : 'WAITING FOR CARS TO CROSS THE LINE',
+    ctx.fillText({cur: 'WAITING FOR CARS TO CROSS THE LINE', last: 'NO COMPLETED LAP RECORDED YET — KEEP COMPARE OPEN FOR A FULL LAP', best: 'NO FULL VALID LAP RECORDED YET'}[cmpLapView],
       padL + plotW / 2, padT + plotH / 2);
   }
 

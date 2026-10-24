@@ -432,6 +432,18 @@ describe('compare mode', () => {
     assert.ok(!p.drawLog.some(c => (c[0] === 'lineTo' || c[0] === 'moveTo') && Number.isNaN(c[2])), 'no NaN points');
     p.close();
   });
+  test('compare draws the best lap', async () => {
+    const {p, draw, labels, setLaps} = await chartPage();
+    p.$('cmpLap').querySelector('[data-l=best]').click();
+    assert.equal(p.eval('cmpLapView'), 'best');
+    draw();
+    assert.ok(labels().includes('NO FULL VALID LAP RECORDED YET'));
+    setLaps(2, {last: [], best: [pt(0), pt(50), pt(100)], bestLap: 3, bestTime: 90000}); // no last lap: only the best can draw
+    draw();
+    assert.ok(!labels().includes('NO FULL VALID LAP RECORDED YET'));
+    assert.equal(p.drawLog.filter(c => c[0] === 'set' && c[1] === 'strokeStyle' && c[2] === '#ff2d1f').length, 1, 'the best lap is drawn');
+    p.close();
+  });
   test('chart toggles and lap-synced traces', async () => {
     const p = await boot();
     const s = dashboardState();

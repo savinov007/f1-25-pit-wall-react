@@ -141,16 +141,66 @@ describe('lap-synced traces', () => {
   });
 });
 
-describe('battery traces', () => {
+describe('battery and best-lap traces', () => {
   const tel = speed => ({m_speed: speed, m_throttle: 1, m_brake: 0, m_gear: 5});
   const st = (store, mode) => ({m_ersStoreEnergy: store, m_ersDeployMode: mode});
-  const lap = (n, d) => ({m_currentLapNum: n, m_lapDistance: d});
+  const lap = (n, d, last = 0, invalid = 0) => ({m_currentLapNum: n, m_lapDistance: d, m_lastLapTimeInMS: last, m_currentLapInvalid: invalid});
+  // a full lap n from the line, 0..98 m in 2 m steps; `last` is the previous lap's time
+  const drive = (traces, n, last, {from = 0, invalidAt = -1} = {}) => {
+    for (let d = from; d < 100; d += 2) L.recordLapTrace(traces, 0, tel(d), lap(n, d, last, d >= invalidAt && invalidAt >= 0 ? 1 : 0), st(2000000, 2));
+  };
+  const cross = (traces, n, time) => L.recordLapTrace(traces, 0, tel(0), lap(n, 0, time), st(0, 0));
   test('samples carry the battery charge (clamped 0..1) and deploy mode', () => {
     const traces = new Map();
     L.recordLapTrace(traces, 0, tel(100), lap(1, 0), st(1000000, 3));
     L.recordLapTrace(traces, 0, tel(100), lap(1, 10), st(9e9, 1));
     L.recordLapTrace(traces, 0, tel(100), lap(1, 20));
     assert.deepEqual(traces.get(0).cur.map(p => [p.ers, p.mode]), [[0.25, 3], [1, 1], [null, null]], 'no status yet: unknown, not empty');
+  });
+  test('the best lap is kept by lap time, not by being the latest', () => {
+    const traces = new Map();
+    drive(traces, 1);
+    drive(traces, 2, 90000);
+    assert.equal(traces.get(0).bestLap, 1);
+    assert.equal(traces.get(0).bestTime, 90000);
+    drive(traces, 3, 95000);
+    assert.equal(traces.get(0).bestLap, 1, 'a slower lap does not replace it');
+    assert.equal(traces.get(0).lastLap, 2);
+    drive(traces, 4, 89000);
+    cross(traces, 5, 88000);
+    assert.equal(traces.get(0).bestLap, 4);
+    assert.equal(traces.get(0).bestTime, 88000);
+  });
+  test('a lap without a time or with too few samples is never the best', () => {
+    const traces = new Map();
+    drive(traces, 1);
+    cross(traces, 2, 0);
+    assert.equal(traces.get(0).bestLap, null);
+    cross(traces, 3, 80000);
+    assert.equal(traces.get(0).bestLap, null, 'one sample is not a lap');
+  });
+  test('a lap joined part-way (server started mid-lap, replay seek) is never the best', () => {
+    const traces = new Map();
+    drive(traces, 1, 0, {from: 0}); // fine, but untimed
+    cross(traces, 2, 0);
+    for (let d = 300; d < 400; d += 2) L.recordLapTrace(traces, 0, tel(d), lap(2, d), st(0, 0));
+    cross(traces, 3, 70000);
+    assert.equal(traces.get(0).bestLap, null, 'started 300 m after the line');
+    assert.equal(traces.get(0).lastLap, 2, 'still shown as the last lap');
+    drive(traces, 3);
+    for (let d = 400; d < 500; d += 2) L.recordLapTrace(traces, 0, tel(d), lap(3, d), st(0, 0));
+    cross(traces, 4, 70000);
+    assert.equal(traces.get(0).bestLap, null, 'a 300 m hole in the middle (seek forward)');
+  });
+  test('an invalid lap is never the best, and the flag clears for the next lap', () => {
+    const traces = new Map();
+    drive(traces, 1, 0, {invalidAt: 50});
+    cross(traces, 2, 80000);
+    assert.equal(traces.get(0).bestLap, null);
+    assert.equal(traces.get(0).invalid, false);
+    drive(traces, 2, 80000);
+    cross(traces, 3, 85000);
+    assert.equal(traces.get(0).bestLap, 2);
   });
   test('battery metrics are labelled', () => {
     assert.equal(L.fmtMetric(0.5, 'ers'), '50%');
