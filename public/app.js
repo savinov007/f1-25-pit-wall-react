@@ -607,7 +607,7 @@ function buildCompareCols() {
       <div class="ccspeed">
         <div><div class="lbl">GEAR</div><b class="ccgear">N</b></div>
         <div class="big"><b class="ccspd">0</b><div class="lbl">KM/H</div></div>
-        <div><div class="lbl">RPM</div><b class="ccrpm">0</b><div class="drs ccdrs">DRS</div><div class="bat ccbat" hidden><div class="batrow"><div class="batbody"><i class="batfill"></i></div><span class="batcap"></span></div><div class="batread"><span class="batbolt">⚡</span><span class="batpct">0</span><small>%</small></div><div class="batlbl">BOOST</div></div></div>
+        <div><div class="lbl">RPM</div><b class="ccrpm">0</b><div class="drs ccdrs">DRS</div><div class="bat ccbat" hidden><div class="batrow"><div class="batbody"><i class="batfill"></i><span class="batpct">0</span></div><span class="batcap"></span></div><div class="batlbl">BOOST</div></div></div>
       </div>
       <div class="ccpedals">
         <div class="hb"><span>THR</span><div class="hbar"><i class="ccthr thr"></i></div><b class="ccthrv">0%</b></div>
