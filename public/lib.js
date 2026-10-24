@@ -184,6 +184,11 @@
   // run out and the car to be deploying in Boost (ERS mode 3).
   const overtakeOn = (t2, status) => !!(t2 && t2.m_2026Regulations && t2.m_overtakeActive && !t2.m_overtakeActivationDistance &&
     status && status.m_ersDeployMode === 3);
+  // Does the car have overtake mode to use right now? The game sets the flags for every car in every session, so
+  // availability only counts in race sessions (15 Race, 16 Race 2, 17 Race 3), with the activation countdown done.
+  const RACE_SESSIONS = [15, 16, 17];
+  const overtakeReady = (t2, sessionType) => !!(t2 && t2.m_2026Regulations && t2.m_overtakeAvailable &&
+    !t2.m_overtakeActivationDistance && RACE_SESSIONS.includes(sessionType));
   // DRS / overtake badge: 2026-regulation cars have overtake mode instead of DRS. wait = metres until the mode
   // becomes available (0 when it is, or there is no countdown).
   function boostBadge(t, t2, status) {
@@ -199,7 +204,7 @@
   const aeroLabel = t2 => (t2 && t2.m_2026Regulations ? (t2.m_activeAeroMode === 1 ? 'STRAIGHT' : 'CORNER') : null);
 
   return {
-    ersModeName, zoneRanges, boostBadge, aeroLabel, overtakeOn, lapTag, fmtSize,
+    ersModeName, zoneRanges, boostBadge, aeroLabel, overtakeOn, overtakeReady, lapTag, fmtSize,
     WEATHER, ERS_MODES, COMPOUNDS, TYRES, CAR_PARTS, DMG_KEYS, DMG_COLORS, TRACK_BUCKET_M,
     tempColor, wearColor, dmgLevel, cap, fmtTime, fmtSector, fmtGap, esc, fmtClock, gapOk, leaderGap,
     learnTrack, recordLapTrace, nearest, metricValue, fmtMetric, fmtDelta,

@@ -743,3 +743,14 @@ body.replaying #connText { color: var(--amber); }
 .batlbl[data-mode="medium"] { color: var(--cyan); }
 .batlbl[data-mode="hotlap"] { color: var(--amber); }
 .batlbl[data-mode="boost"], .batlbl[data-mode="overtake"] { color: var(--green); }
+
+/* battery colours: blue = driver has overtake mode, green = charged, red = nearly empty */
+.batfill { background: linear-gradient(90deg, #12a550, var(--green)); }
+.bat.low .batfill { background: linear-gradient(90deg, #b3201a, var(--red-hi)); }
+.bat.ot .batfill { background: linear-gradient(90deg, #2a6bff, var(--cyan)); }
+.bat.ot .batbody { border-color: var(--cyan); }
+.bat.ot .batcap { background: var(--cyan); }
+.bat.boost .batbody { animation-name: batboostblue; }
+@keyframes batboostblue { 50% { box-shadow: 0 0 16px rgba(51, 214, 232, .8); } 0%, 100% { box-shadow: 0 0 5px rgba(51, 214, 232, .35); } }
+.bat:not(.ot).boost .batbody { border-color: var(--line2); }
+.batlbl[data-mode="boost"], .batlbl[data-mode="overtake"] { color: var(--cyan); }

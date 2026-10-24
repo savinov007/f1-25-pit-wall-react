@@ -4,7 +4,7 @@ const {
   tempColor, wearColor, dmgLevel, cap, fmtTime, fmtSector, fmtGap, esc, fmtClock, gapOk, leaderGap,
   learnTrack, recordLapTrace, nearest, metricValue, fmtMetric, fmtDelta,
   tyreProjection, fmtLaps, lapsColor, fmtS, fmtRate, nameOf, rejoinEstimate, battleTrend,
-  ersModeName, zoneRanges, boostBadge, aeroLabel, lapTag, fmtSize,
+  ersModeName, zoneRanges, boostBadge, aeroLabel, overtakeReady, lapTag, fmtSize,
 } = PitLib;
 const ERS_MAX = 4000000;
 const TRACE_SECONDS = 10;
@@ -136,7 +136,7 @@ function renderBadges(drs, aero, t, t2, status, bat) {
   drs.hidden = badge.label === 'OVERTAKE';
   drs.textContent = badge.label;
   drs.classList.toggle('on', badge.on);
-  if (bat) renderBattery(bat, status, badge);
+  if (bat) renderBattery(bat, status, badge, t2);
   if (!aero) return;
   const label = aeroLabel(t2);
   aero.hidden = !label;
@@ -146,7 +146,7 @@ function renderBadges(drs, aero, t, t2, status, bat) {
   }
 }
 
-function renderBattery(bat, st, badge) {
+function renderBattery(bat, st, badge, t2) {
   bat.hidden = !st;
   if (!st) return;
   const pct = Math.max(0, Math.min(100, (st.m_ersStoreEnergy / ERS_MAX) * 100));
@@ -158,8 +158,11 @@ function renderBattery(bat, st, badge) {
   lbl.dataset.mode = mode.toLowerCase();
   bat.classList.toggle('low', pct < 15);
   const boosting = badge.on && badge.label === 'OVERTAKE'; // DRS on a pre-2026 car doesn't glow the battery
+  // blue = the driver has overtake mode (available, or in use); otherwise green with charge, red when nearly empty
+  const sessionType = latest && latest.session && latest.session.sessionType;
+  bat.classList.toggle('ot', boosting || overtakeReady(t2, sessionType));
   bat.classList.toggle('boost', boosting);
-  bat.title = `Battery ${Math.round(pct)}% · ERS mode: ${mode || 'unknown'}` + (boosting ? ' · overtake mode in use' : badge.wait ? ` · overtake available in ${badge.wait} m` : '');
+  bat.title = `Battery ${Math.round(pct)}% · ERS mode: ${mode || 'unknown'}` + (bat.classList.contains('ot') && !boosting ? ' · overtake mode available' : '') + (boosting ? ' · overtake mode in use' : badge.wait ? ` · overtake available in ${badge.wait} m` : '');
 }
 
 function renderDriving(t, prefix, trail, t2, status) {
