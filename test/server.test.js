@@ -688,3 +688,17 @@ describe('player without a car', () => {
     assert.equal(s.rivals.filter(r => r.player).length, 0);
   });
 });
+
+describe('demo compare data', () => {
+  test('demo cars drive differently and throttle is not an on/off step', () => {
+    const d = offline({demo: true});
+    for (let t = 0; t < 6000; t += 50) d.applyDemoFrame(t);
+    const [a, b, c] = [0, 1, 2].map(i => d.buildDetail(i));
+    assert.notEqual(a.telemetry.m_throttle, b.telemetry.m_throttle, 'cars differ');
+    assert.notEqual(a.lap.m_lapDistance, c.lap.m_lapDistance, 'and sit at different distances');
+    const values = new Set();
+    for (let t = 0; t < 30000; t += 250) values.add(require('../server').demoFrame(t).telemetry.m_throttle.toFixed(2));
+    assert.ok(values.size > 6, `throttle takes many values over a lap: ${values.size}`);
+    assert.ok([...values].every(v => v >= 0 && v <= 1));
+  });
+});
