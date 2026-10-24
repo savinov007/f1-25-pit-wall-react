@@ -26,7 +26,7 @@
     <button id="rec" class="rec" title="Record raw game packets to a file" disabled><i></i><span id="recText">REC</span></button>
     <button id="replaysBtn" class="hbtn" title="Open a saved recording as a replay in a new tab">▶ Replays</button>
     <button id="compareBtn" class="hbtn accent" title="Compare drivers side by side">⇄ Compare</button>
-    <button id="resetLayout" class="hbtn" title="Reset section sizes">⟲ Layout</button>
+    <button id="layoutBtn" class="hbtn" title="Arrange the dashboard sections">⊞ Layout</button>
     <span class="status"><span id="dot" class="dot"></span><span id="connText">Connecting…</span><span class="pps"><b id="pps">0</b> pkt/s</span></span>
   </div>
 </header>
@@ -48,7 +48,6 @@
     </div>
     <canvas id="trace"></canvas>
   </section>
-  <div class="split" data-dir="y" role="separator" aria-orientation="horizontal" aria-label="Resize sections" tabindex="0"></div>
   <section class="card tyres" id="p-tyres">
     <h2><span>Tyres &amp; car</span><span class="compound"><span id="cdot" class="cdot"></span><b id="cname">–</b><small id="cage"></small></span></h2>
     <div class="tyrebox" id="tyregrid"></div>
@@ -59,7 +58,6 @@
     <div class="dmg" id="dmg"></div>
   </section>
   </div>
-  <div class="split" data-dir="x" role="separator" aria-orientation="vertical" aria-label="Resize columns" tabindex="0"></div>
   <div class="col" id="c2">
   <section class="card lap" id="p-lap">
     <h2><span>Lap timing</span><span class="flags"><span id="invalid" class="flag" hidden>LAP INVALID</span><span id="pit" class="flag blue" hidden>IN PIT</span><span id="wrongWay" class="flag" hidden>WRONG WAY</span></span></h2>
@@ -78,21 +76,18 @@
       <div id="s3"><span>S3</span><b>–</b></div>
     </div>
   </section>
-  <div class="split" data-dir="y" role="separator" aria-orientation="horizontal" aria-label="Resize sections" tabindex="0"></div>
   <section class="card map" id="p-map">
     <h2><span>Track map</span><span class="maplegend" id="mapLegend" hidden><i class="lz aero"></i>ACTIVE AERO<i class="lz drsz"></i>DRS</span></h2>
     <canvas id="map"></canvas>
     <div class="g"><span>G-LAT <b id="gLat">0.0</b></span><span>G-LONG <b id="gLong">0.0</b></span></div>
   </section>
   </div>
-  <div class="split" data-dir="x" role="separator" aria-orientation="vertical" aria-label="Resize columns" tabindex="0"></div>
   <div class="col" id="c3">
   <section class="card standings" id="p-standings">
     <h2><span>Standings</span><span class="hbtns"><button id="compareBtn2" class="mode" title="Compare drivers side by side">COMPARE</button><button id="gapMode" class="mode" title="Toggle gap type">INTERVAL</button></span></h2>
     <div class="shead"><span>P</span><span></span><span>DRIVER</span><span id="gapHead">GAP</span><button id="lapMode" class="lapmode" title="Toggle last / best lap">LAST</button><span>TYRE</span></div>
     <div id="rows" class="rows"><div class="empty">No rivals yet</div></div>
   </section>
-  <div class="split" data-dir="y" role="separator" aria-orientation="horizontal" aria-label="Resize sections" tabindex="0"></div>
   <section class="card strategy" id="p-strategy">
     <h2><span>Strategy</span><label class="wearlimit" title="Wear level you plan to pit at">PIT AT
       <select id="wearLimit"><option>50</option><option>60</option><option>65</option><option selected>70</option><option>75</option><option>80</option></select>%</label></h2>
@@ -175,6 +170,23 @@
   </div>
   <div class="cmpcols" id="cmpCols"><div class="cmpempty">Pick drivers above to compare their telemetry</div></div>
 </div>
+<div id="lo" class="rlover" hidden>
+  <div class="rlbox lobox" role="dialog" aria-modal="true" aria-labelledby="loTitle">
+    <div class="rlhead"><b id="loTitle">Dashboard layout</b><button type="button" id="loClose" title="Close without saving">✕</button></div>
+    <p class="lohint">Drag sections between columns to arrange the dashboard; each column stacks its sections top to bottom.
+      With the keyboard: focus a section and use the arrow keys.</p>
+    <div class="logrid" id="loGrid"></div>
+    <div class="lofoot">
+      <button type="button" id="loAddCol" class="lobtn">+ Column</button>
+      <button type="button" id="loDefault" class="lobtn">Default layout</button>
+      <label class="lochk" title="Even out the sizes you set by dragging the dividers"><input type="checkbox" id="loSizes"> Reset section sizes</label>
+      <span class="losp"></span>
+      <button type="button" id="loCancel" class="lobtn">Cancel</button>
+      <button type="button" id="loSave" class="lobtn save">Save layout</button>
+    </div>
+  </div>
+</div>
+
 <div id="rl" class="rlover" hidden>
   <div class="rlbox" role="dialog" aria-label="Saved replays">
     <div class="rlhead"><b>Saved replays</b><button type="button" id="rlClose" title="Close">✕</button></div>

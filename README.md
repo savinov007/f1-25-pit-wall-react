@@ -27,7 +27,8 @@ Then open http://localhost:3000. The first screen asks which format the game sen
 - **Strategy models**: tyre wear rate and laps until a wear limit, pace trend, gap trend to the cars ahead and behind, measured pit loss and where you would rejoin.
 - **Rival popup**: click a driver for a floating, draggable, resizable window with their full telemetry.
 - **Compare mode**: up to four drivers side by side, with a live trace chart or a lap-synced chart to see the difference at the same corner.
-- **Resizable layout**: drag the dividers between sections; sizes are remembered.
+- **Custom layout**: the Layout button opens a dialog where you drag sections into up to four columns, in any order
+  (arrow keys work too); drag the dividers between sections to resize them. Both are remembered.
 - **Recording and replay**: the REC button saves the raw packets; the **Replays** button lists saved recordings and opens one in a new tab with a floating player (play / pause, seek, ±10 s, loop, 0.25× to 10×).
 - **F1 26 support**: 24 cars, 16-bit team IDs (including Audi and Cadillac), quantised g-forces, active aero, overtake mode, the new events and the Madrid circuit. Parsed against the official spec, byte for byte.
 

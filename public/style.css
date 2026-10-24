@@ -316,7 +316,7 @@ canvas { display: block; width: 100%; }
   header { padding: 8px 2px; margin-bottom: 10px; }
   main { flex: 1; min-height: 0; display: flex; flex-direction: row; gap: 0; }
   .col { flex: 1 1 0; min-height: 0; gap: 0; }
-  #c1 { flex-grow: 5; } #c2 { flex-grow: 4; } #c3 { flex-grow: 3; }
+  #c1 { flex-grow: 5; } #c2 { flex-grow: 4; } #c3 { flex-grow: 3; } #c4 { flex-grow: 3; }
   .col > .card { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; padding: 11px 14px; container-type: size; }
 
   .split { display: block; flex: 0 0 10px; position: relative; touch-action: none; z-index: 2; outline: none; }
@@ -717,6 +717,35 @@ body.replaying #connText { color: var(--amber); }
 .waitreplay { margin: 14px 0 0; padding: 10px 16px; cursor: pointer; font: 700 13px var(--f-display); letter-spacing: .16em; text-transform: uppercase;
   color: #1a1300; background: var(--amber); border: 0; border-radius: 8px; }
 .waitreplay:hover { filter: brightness(1.1); }
+
+/* layout dialog: drag sections between columns */
+.lobox { width: min(860px, calc(100vw - 24px)); }
+.lohint { margin: 0; padding: 12px 16px 0; font-size: 12px; line-height: 1.5; color: var(--dim); }
+.logrid { display: grid; grid-template-columns: repeat(var(--n, 3), minmax(140px, 1fr)); gap: 10px; padding: 14px 16px; overflow: auto; }
+.locol { display: flex; flex-direction: column; gap: 8px; min-height: 180px; padding: 10px; border: 1px dashed var(--line2); border-radius: 10px; background: rgba(255, 255, 255, .02); }
+.lohead { display: flex; justify-content: space-between; align-items: center; min-height: 22px; font: 700 11px/1 var(--f-display); letter-spacing: .2em; text-transform: uppercase; color: var(--faint); }
+.lorm { font: 600 12px var(--f-ui); color: var(--dim); background: transparent; border: 1px solid var(--line2); border-radius: 6px; padding: 2px 7px; cursor: pointer; }
+.lorm:hover { color: var(--text); border-color: var(--red-hi); }
+.lotile { display: flex; align-items: center; gap: 10px; padding: 12px; cursor: grab; touch-action: none; user-select: none;
+  font: 700 14px var(--f-display); letter-spacing: .08em; text-transform: uppercase; color: var(--text);
+  background: var(--card); border: 1px solid var(--line2); border-radius: 8px; outline: none; transition: border-color .15s, opacity .15s; }
+.lotile:hover, .lotile:focus-visible { border-color: var(--amber); }
+.lotile:focus-visible { box-shadow: 0 0 0 2px rgba(255, 176, 32, .35); }
+.lotile.dragging { opacity: .35; }
+.logrip { color: var(--faint); letter-spacing: -2px; }
+.loempty { flex: 1; display: grid; place-items: center; text-align: center; padding: 12px; font-size: 12px; color: var(--faint); }
+.lodrop { height: 3px; border-radius: 3px; background: var(--amber); box-shadow: 0 0 10px var(--amber); }
+.loghost { position: fixed; z-index: 70; pointer-events: none; transform: translate(-50%, -50%); padding: 10px 14px; border-radius: 8px;
+  font: 700 14px var(--f-display); letter-spacing: .08em; text-transform: uppercase; color: #1a1300; background: var(--amber); box-shadow: 0 14px 30px -8px #000; }
+body.lodragging, body.lodragging * { cursor: grabbing !important; }
+.lofoot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 12px 16px 16px; border-top: 1px solid var(--line); }
+.losp { flex: 1; }
+.lobtn { font: 700 12px var(--f-display); letter-spacing: .14em; text-transform: uppercase; color: var(--text); background: rgba(255, 255, 255, .04);
+  border: 1px solid var(--line2); border-radius: 8px; padding: 8px 12px; cursor: pointer; }
+.lobtn:hover:not(:disabled) { border-color: var(--amber); }
+.lobtn:disabled { opacity: .4; cursor: default; }
+.lobtn.save { color: #1a1300; background: var(--amber); border-color: var(--amber); }
+.lochk { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--dim); cursor: pointer; }
 
 /* battery gauge (ERS charge); glows green while overtake mode is in use */
 .bat { margin: 8px auto 0; width: 84px; }
