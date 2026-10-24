@@ -157,7 +157,7 @@ function renderBattery(bat, st, badge, t2) {
   lbl.textContent = mode || '–';
   lbl.dataset.mode = mode.toLowerCase();
   bat.classList.toggle('low', pct < 15);
-  const boosting = badge.on && badge.label === 'OVERTAKE'; // DRS on a pre-2026 car doesn't glow the battery
+  const boosting = st.m_ersDeployMode === 3; // ERS Boost: the game's own signal, whatever the overtake flags say
   // blue = the driver has overtake mode (available, or in use); otherwise green with charge, red when nearly empty
   const sessionType = latest && latest.session && latest.session.sessionType;
   bat.classList.toggle('ot', boosting || overtakeReady(t2, sessionType));

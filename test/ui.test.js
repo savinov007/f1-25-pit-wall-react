@@ -502,7 +502,7 @@ describe('F1 26 (UDP format 2026)', () => {
     m_activeAeroMode: 0, m_activeAeroAvailable: 1, m_activeAeroActivationDistance: 0, m_overtakeAvailable: 0,
     m_overtakeActive: 0, m_overtakeActivationDistance: 0, m_2026Regulations: 1, m_drivingWrongWay: 0, ...o,
   });
-  test('2026 cars show a battery instead of DRS; it glows only while overtake is in use', async () => {
+  test('2026 cars show a battery instead of DRS; it glows while in ERS Boost', async () => {
     const p = await boot();
     const base = dashboardState();
     const status = (mode, store = 2000000) => ({...base.status, m_ersDeployMode: mode, m_ersStoreEnergy: store});
@@ -525,7 +525,11 @@ describe('F1 26 (UDP format 2026)', () => {
     assert.equal(p.$('aero').textContent, 'CORNER');
     assert.equal(p.$('aero').classList.contains('on'), false);
     p.push({...base, status: status(3), telemetry2: t2({m_overtakeAvailable: 1, m_overtakeActive: 1, m_overtakeActivationDistance: 150})});
-    assert.equal(bat.classList.contains('boost'), false, 'countdown running');
+    assert.equal(bat.classList.contains('boost'), true, 'ERS Boost glows whatever the overtake flags say');
+    p.push({...base, status: status(3), telemetry2: t2({})});
+    assert.equal(bat.classList.contains('boost'), true, 'even with the flags clear');
+    p.push({...base, status: status(1), telemetry2: t2({m_overtakeAvailable: 1, m_overtakeActive: 1, m_overtakeActivationDistance: 150})});
+    assert.equal(bat.classList.contains('boost'), false, 'countdown running, not in Boost');
     assert.match(bat.title, /available in 150 m/);
     p.push({...base, status: status(1, 300000), telemetry2: t2({})});
     assert.equal(bat.classList.contains('low'), true, 'under 15% turns red');
@@ -580,7 +584,7 @@ describe('F1 26 (UDP format 2026)', () => {
     assert.equal(p.$('dmAero').textContent, 'STRAIGHT');
     p.key(p.doc, 'Escape');
     p.$('compareBtn').click();
-    p.push({...s, compare: [boosting({...detailFor(s, 2), telemetry2: t2({m_overtakeActive: 1})}), {...detailFor(s, 1), telemetry2: null}]});
+    p.push({...s, compare: [boosting({...detailFor(s, 2), telemetry2: t2({m_overtakeActive: 1})}), {...detailFor(s, 1), status: {...detailFor(s, 1).status, m_ersDeployMode: 2}, telemetry2: null}]});
     const [you, nor] = [...p.doc.querySelectorAll('.cc')];
     assert.equal(you.querySelector('.ccbat').classList.contains('boost'), true);
     assert.equal(you.querySelector('.ccdrs').hidden, true);
