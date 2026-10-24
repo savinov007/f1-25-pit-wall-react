@@ -928,3 +928,32 @@ describe('replays from the waiting screen', () => {
     assert.equal(p.doc.querySelectorAll('.rlrow').length, 1);
   });
 });
+
+describe('battery colour', () => {
+  const t2 = o => ({m_activeAeroMode: 0, m_activeAeroAvailable: 0, m_activeAeroActivationDistance: 0, m_overtakeAvailable: 1,
+    m_overtakeActive: 1, m_overtakeActivationDistance: 0, m_2026Regulations: 1, m_drivingWrongWay: 0, ...o});
+  const colour = b => (b.classList.contains('ot') ? 'blue' : b.classList.contains('low') ? 'red' : 'green');
+  test('blue with overtake mode, otherwise green with charge and red when empty', async () => {
+    const p = await boot();
+    const base = dashboardState();
+    const push = (type, mode, store, over) => p.push({...base, session: {...base.session, sessionType: type},
+      status: {...base.status, m_ersDeployMode: mode, m_ersStoreEnergy: store}, telemetry2: t2(over)});
+    const bat = p.$('bat');
+    push(15, 1, 2000000);
+    assert.equal(colour(bat), 'blue', 'race, overtake available');
+    assert.match(bat.title, /overtake mode available/);
+    push(15, 1, 100000);
+    assert.equal(colour(bat), 'blue', 'having overtake wins over a low charge');
+    push(15, 3, 2000000);
+    assert.equal(colour(bat), 'blue', 'in use');
+    assert.equal(bat.classList.contains('boost'), true);
+    push(15, 1, 2000000, {m_overtakeActivationDistance: 120});
+    assert.equal(colour(bat), 'green', 'countdown running: no overtake, has charge');
+    push(15, 1, 100000, {m_overtakeAvailable: 0, m_overtakeActive: 0});
+    assert.equal(colour(bat), 'red', 'no overtake, nearly empty');
+    push(5, 1, 2000000);
+    assert.equal(colour(bat), 'green', 'qualifying: the always-on flag is ignored');
+    push(5, 3, 2000000);
+    assert.equal(colour(bat), 'blue', 'but Boost in use still counts');
+  });
+});

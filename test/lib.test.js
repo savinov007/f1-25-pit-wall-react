@@ -269,3 +269,15 @@ describe('file size', () => {
     assert.equal(L.fmtSize(10), '0.1 MB');
   });
 });
+
+describe('overtake available (battery colour)', () => {
+  const t2 = {m_2026Regulations: 1, m_overtakeAvailable: 1, m_overtakeActive: 1, m_overtakeActivationDistance: 0};
+  test('only in race sessions, with the countdown finished', () => {
+    for (const s of [15, 16, 17]) assert.equal(L.overtakeReady(t2, s), true);
+    for (const s of [0, 1, 4, 5, 8, 10, 13, undefined]) assert.equal(L.overtakeReady(t2, s), false, `session ${s}: the game sets the flag for everyone`);
+    assert.equal(L.overtakeReady({...t2, m_overtakeActivationDistance: 80}, 15), false);
+    assert.equal(L.overtakeReady({...t2, m_overtakeAvailable: 0}, 15), false);
+    assert.equal(L.overtakeReady({...t2, m_2026Regulations: 0}, 15), false);
+    assert.equal(L.overtakeReady(null, 15), false);
+  });
+});
