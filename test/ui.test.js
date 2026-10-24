@@ -971,3 +971,12 @@ describe('session chip', () => {
     assert.equal(p.$('sessChip').hidden, true);
   });
 });
+
+describe('battery glow', () => {
+  test('the stylesheet animates a glow on the blue battery, faster while boosting', () => {
+    const css = require('fs').readFileSync(require('path').join(__dirname, '..', 'public', 'style.css'), 'utf8');
+    assert.match(css, /\.bat\.ot \.batbody\s*\{\s*animation:\s*batglow/);
+    assert.match(css, /\.bat\.ot\.boost \.batbody\s*\{\s*animation:\s*batglow 0\.7s/);
+    assert.match(css, /@keyframes batglow/);
+  });
+});
