@@ -957,3 +957,17 @@ describe('battery colour', () => {
     assert.equal(colour(bat), 'blue', 'but Boost in use still counts');
   });
 });
+
+describe('session chip', () => {
+  test('header shows the session, lap and time left', async () => {
+    const p = await boot();
+    const s = dashboardState();
+    p.push(s);
+    assert.match(p.$('sessChip').textContent, /^Race · LAP \d+\/30$/);
+    assert.equal(p.$('sessChip').hidden, false);
+    p.push({...s, session: {...s.session, sessionType: 6, timeLeft: 605}, lap: {...s.lap, m_currentLapNum: 4}});
+    assert.equal(p.$('sessChip').textContent, 'Qualifying 2 · LAP 4 · 10:05 LEFT');
+    p.push({...s, session: {...s.session, sessionType: 0}});
+    assert.equal(p.$('sessChip').hidden, true);
+  });
+});

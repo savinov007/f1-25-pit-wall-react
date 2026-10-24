@@ -659,3 +659,15 @@ describe('command line', () => {
     assert.equal(await exited(child), 0);
   });
 });
+
+describe('session time', () => {
+  test('time left and duration come from the session packet', () => {
+    const d = offline();
+    const f26 = require('./f1-2026');
+    d.handlePacket(f26.build('session'));
+    const se = d.refreshState().session;
+    assert.equal(se.timeLeft, 3600);
+    assert.equal(se.duration, 7200);
+    assert.equal(se.sessionType, 15);
+  });
+});

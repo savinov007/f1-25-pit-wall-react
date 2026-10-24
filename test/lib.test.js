@@ -281,3 +281,15 @@ describe('overtake available (battery colour)', () => {
     assert.equal(L.overtakeReady(null, 15), false);
   });
 });
+
+describe('session label', () => {
+  test('name, lap (of the total in a race) and time left when timed', () => {
+    assert.equal(L.sessionLabel({sessionType: 15, totalLaps: 30, timeLeft: 900}, 12), 'Race · LAP 12/30', 'races show laps, not the clock');
+    assert.equal(L.sessionLabel({sessionType: 5, totalLaps: 0, timeLeft: 754}, 3), 'Qualifying 1 · LAP 3 · 12:34 LEFT');
+    assert.equal(L.sessionLabel({sessionType: 1, timeLeft: 3600}, 0), 'Practice 1 · 60:00 LEFT', 'no lap yet');
+    assert.equal(L.sessionLabel({sessionType: 16, totalLaps: 0}, 2), 'Race 2 · LAP 2', 'unknown total');
+    assert.equal(L.sessionLabel({sessionType: 8, timeLeft: 0}, 1), 'Short Qualifying · LAP 1');
+    assert.equal(L.sessionLabel({sessionType: 0}, 4), '', 'unknown session');
+    assert.equal(L.sessionLabel(null, 4), '');
+  });
+});
