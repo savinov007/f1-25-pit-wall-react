@@ -714,3 +714,7 @@ body.replaying #connText { color: var(--amber); }
 .rlname { grid-area: name; font: 500 11px var(--f-mono); color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rlgo { grid-area: go; align-self: center; font: 800 12px var(--f-display); letter-spacing: .16em; color: #1a1300; background: var(--amber); padding: 7px 10px; border-radius: 6px; }
 .rlnote { margin: 0; padding: 10px 16px 14px; font-size: 12px; color: var(--dim); }
+
+.waitreplay { margin: 14px 0 0; padding: 10px 16px; cursor: pointer; font: 700 13px var(--f-display); letter-spacing: .16em; text-transform: uppercase;
+  color: #1a1300; background: var(--amber); border: 0; border-radius: 8px; }
+.waitreplay:hover { filter: brightness(1.1); }

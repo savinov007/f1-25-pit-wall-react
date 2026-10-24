@@ -148,6 +148,7 @@ async function openReplayTab(file) {
   }
 }
 document.getElementById('replaysBtn').onclick = openReplays;
+document.getElementById('waitReplays').onclick = openReplays;
 document.getElementById('rlClose').onclick = closeReplays;
 rl.addEventListener('click', e => {
   if (e.target === rl) closeReplays();
