@@ -902,3 +902,18 @@ describe('stylesheet class clashes', () => {
     });
   });
 });
+
+describe('replays from the waiting screen', () => {
+  test('the waiting screen offers saved replays without live data', async () => {
+    const p = await boot();
+    const calls = [];
+    p.w.fetch = async url => { calls.push(url); return {ok: true, status: 200, json: async () => [{file: 'a.jsonl', bytes: 1048576, modified: 1, startedAt: null, duration: 5000}]}; };
+    p.push(dashboardState({hasData: false, setup: {ips: [], udpPort: 20777}}));
+    assert.equal(p.$('wait').hidden, false);
+    p.$('waitReplays').click();
+    await p.tick(5);
+    assert.deepEqual(calls, ['/api/replays']);
+    assert.equal(p.$('rl').hidden, false);
+    assert.equal(p.doc.querySelectorAll('.rlrow').length, 1);
+  });
+});
