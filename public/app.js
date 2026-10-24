@@ -152,10 +152,14 @@ function renderBattery(bat, st, badge) {
   const pct = Math.max(0, Math.min(100, (st.m_ersStoreEnergy / ERS_MAX) * 100));
   bat.querySelector('.batfill').style.width = pct + '%';
   bat.querySelector('.batpct').textContent = Math.round(pct);
+  const mode = ersModeName(st.m_ersDeployMode, badge.label === 'OVERTAKE' ? 2026 : 2025).toUpperCase();
+  const lbl = bat.querySelector('.batlbl');
+  lbl.textContent = mode || '–';
+  lbl.dataset.mode = mode.toLowerCase();
   bat.classList.toggle('low', pct < 15);
   const boosting = badge.on && badge.label === 'OVERTAKE'; // DRS on a pre-2026 car doesn't glow the battery
   bat.classList.toggle('boost', boosting);
-  bat.title = `Battery ${Math.round(pct)}%` + (boosting ? ' · overtake mode in use' : badge.wait ? ` · overtake available in ${badge.wait} m` : '');
+  bat.title = `Battery ${Math.round(pct)}% · ERS mode: ${mode || 'unknown'}` + (boosting ? ' · overtake mode in use' : badge.wait ? ` · overtake available in ${badge.wait} m` : '');
 }
 
 function renderDriving(t, prefix, trail, t2, status) {

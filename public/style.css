@@ -737,3 +737,9 @@ body.replaying #connText { color: var(--amber); }
 @keyframes batboost { 50% { box-shadow: 0 0 16px rgba(31, 209, 102, .75); } 0%, 100% { box-shadow: 0 0 5px rgba(31, 209, 102, .35); } }
 .dmbox .bat { width: 70px; } .dmbox .batbody { height: 22px; }
 .ccspeed .bat { width: 56px; } .ccspeed .batbody { height: 18px; } .ccspeed .batpct { font-size: 10px; } .ccspeed .batlbl { font-size: 9px; letter-spacing: .16em; }
+
+/* ERS deploy mode under the battery */
+.batlbl { visibility: visible; color: var(--dim); }
+.batlbl[data-mode="medium"] { color: var(--cyan); }
+.batlbl[data-mode="hotlap"] { color: var(--amber); }
+.batlbl[data-mode="boost"], .batlbl[data-mode="overtake"] { color: var(--green); }
