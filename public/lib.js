@@ -180,7 +180,30 @@
     return {...snap.lt, cur: unpackPoints(snap.lt.cur, 'd'), last, best: snap.lt.best === 'last' ? last : unpackPoints(snap.lt.best, 'd')};
   }
 
-  // --- Strategy projections from the server's measured rates ---
+  // --- Dashboard arrangement: which sections sit in which column, top to bottom ({cols: [[id, ...], ...]}) ---
+  const MAX_COLS = 4;
+  // A saved arrangement checked against the sections the page has: every section exactly once (unknown ones and
+  // repeats dropped, missing ones added to the last column), no empty columns, at most MAX_COLS. Unusable: the fallback.
+  function normalizeArrangement(saved, ids, fallback) {
+    const copy = a => ({cols: a.cols.map(c => [...c])});
+    if (!saved || !Array.isArray(saved.cols)) return copy(fallback);
+    const seen = new Set();
+    const keep = id => ids.includes(id) && !seen.has(id) && seen.add(id);
+    const cols = saved.cols.filter(Array.isArray).map(c => c.filter(keep)).filter(c => c.length).slice(0, MAX_COLS);
+    if (!cols.length) return copy(fallback);
+    const placed = new Set(cols.flat());
+    cols[cols.length - 1].push(...ids.filter(id => !placed.has(id)));
+    return {cols};
+  }
+  // The arrangement with section `id` moved to column `col` at `index`, counted without the moved section.
+  // Empty columns are kept: while editing, an empty column is a place to drop a section.
+  function moveSection(arr, id, col, index) {
+    const cols = arr.cols.map(c => c.filter(x => x !== id));
+    if (!cols[col]) return {cols: arr.cols.map(c => [...c])};
+    cols[col].splice(Math.max(0, Math.min(index, cols[col].length)), 0, id);
+    return {cols};
+  }
+
   // laps until each corner reaches the wear limit (Infinity when it isn't wearing, 0 when already past)
   function tyreProjection(st, limit) {
     if (!st || !st.wear) return null;
@@ -290,6 +313,7 @@
     ersModeName, zoneRanges, boostBadge, aeroLabel, overtakeOn, overtakeReady, sessionLabel, lapTag, fmtSize,
     WEATHER, ERS_MODES, COMPOUNDS, TYRES, CAR_PARTS, DMG_KEYS, DMG_COLORS, TRACK_BUCKET_M,
     tempColor, wearColor, dmgLevel, cap, fmtTime, fmtSector, fmtGap, esc, fmtClock, gapOk, leaderGap,
+    MAX_COLS, normalizeArrangement, moveSection,
     learnTrack, recordLapTrace, createHistory, recordHistory, historySnapshot, historyTrail, historyLaps, packPoints, traceSample, nearest, metricValue, fmtMetric, fmtDelta,
     tyreProjection, fmtLaps, lapsColor, fmtS, fmtRate, nameOf, rejoinEstimate, battleTrend,
   };

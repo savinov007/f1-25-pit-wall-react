@@ -272,6 +272,45 @@ describe('per-car history', () => {
   });
 });
 
+describe('dashboard arrangement', () => {
+  const ids = ['a', 'b', 'c', 'd', 'e'];
+  const def = {cols: [['a', 'b'], ['c', 'd'], ['e']]};
+  test('a valid saved arrangement is kept as it is', () => {
+    const saved = {cols: [['e', 'a'], ['b', 'c', 'd']]};
+    assert.deepEqual(L.normalizeArrangement(saved, ids, def), saved);
+  });
+  test('nothing usable saved: the default, as a copy', () => {
+    for (const bad of [null, undefined, {}, {cols: 'x'}, {cols: []}, {cols: [[], ['nope']]}, {cols: [5, null]}]) {
+      const out = L.normalizeArrangement(bad, ids, def);
+      assert.deepEqual(out, def);
+      assert.notEqual(out.cols[0], def.cols[0], 'never the default\'s own arrays');
+    }
+  });
+  test('unknown and repeated sections are dropped, missing ones go to the last column', () => {
+    const out = L.normalizeArrangement({cols: [['b', 'zzz', 'b'], 'x', [], ['a', 7]]}, ids, def);
+    assert.deepEqual(out, {cols: [['b'], ['a', 'c', 'd', 'e']]}, 'a page update that adds a section shows it, not hides it');
+  });
+  test('at most four columns; sections of the extra columns are kept', () => {
+    const out = L.normalizeArrangement({cols: [['a'], ['b'], ['c'], ['d'], ['e']]}, ids, def);
+    assert.equal(L.MAX_COLS, 4);
+    assert.deepEqual(out, {cols: [['a'], ['b'], ['c'], ['d', 'e']]});
+  });
+  test('moving a section within and between columns', () => {
+    assert.deepEqual(L.moveSection(def, 'a', 0, 1), {cols: [['b', 'a'], ['c', 'd'], ['e']]}, 'down one');
+    assert.deepEqual(L.moveSection(def, 'a', 2, 0), {cols: [['b'], ['c', 'd'], ['a', 'e']]}, 'to the top of another column');
+    assert.deepEqual(L.moveSection(def, 'd', 0, 99), {cols: [['a', 'b', 'd'], ['c'], ['e']]}, 'an index past the end means last');
+    assert.deepEqual(L.moveSection(def, 'd', 0, -3), {cols: [['d', 'a', 'b'], ['c'], ['e']]}, 'below 0 means first');
+  });
+  test('moving keeps empty columns (somewhere to drop while editing) and ignores a missing column', () => {
+    const withEmpty = {cols: [['a', 'b'], []]};
+    assert.deepEqual(L.moveSection(withEmpty, 'b', 1, 0), {cols: [['a'], ['b']]});
+    assert.deepEqual(L.moveSection({cols: [['a'], ['b']]}, 'b', 0, 1), {cols: [['a', 'b'], []]}, 'the emptied column stays');
+    const same = L.moveSection(def, 'a', 9, 0);
+    assert.deepEqual(same, def);
+    assert.notEqual(same.cols[0], def.cols[0]);
+  });
+});
+
 describe('chart helpers', () => {
   const pts = [0, 10, 20, 30].map(d => ({d}));
   test('nearest sample by binary search', () => {
