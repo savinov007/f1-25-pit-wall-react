@@ -157,6 +157,13 @@ describe('battery and best-lap traces', () => {
     L.recordLapTrace(traces, 0, tel(100), lap(1, 20));
     assert.deepEqual(traces.get(0).cur.map(p => [p.ers, p.mode]), [[0.25, 3], [1, 1], [null, null]], 'no status yet: unknown, not empty');
   });
+  test('samples are rounded so history snapshots stay small', () => {
+    const s = L.traceSample({m_speed: 200, m_throttle: 0.123456, m_brake: 0.98765, m_gear: 6}, st(1234567, 1));
+    assert.deepEqual(s, {speed: 200, thr: 0.123, brk: 0.988, gear: 6, ers: 0.309, mode: 1});
+    const traces = new Map();
+    L.recordLapTrace(traces, 0, tel(1), lap(1, 12.3456));
+    assert.equal(traces.get(0).cur[0].d, 12.3);
+  });
   test('the best lap is kept by lap time, not by being the latest', () => {
     const traces = new Map();
     drive(traces, 1);
@@ -208,6 +215,60 @@ describe('battery and best-lap traces', () => {
     assert.equal(L.fmtMetric(3, 'mode', 2026), 'Boost');
     assert.equal(L.fmtMetric(9, 'mode'), '–');
     assert.equal(L.fmtDelta(-0.25, 'ers'), '−25%');
+  });
+});
+
+describe('per-car history', () => {
+  const tel = speed => ({m_speed: speed, m_throttle: 0.5, m_brake: 0, m_gear: 3});
+  const lap = d => ({m_currentLapNum: 1, m_lapDistance: d, m_lastLapTimeInMS: 0});
+  test('records a trail at a limited rate and forgets samples older than 20 s', () => {
+    const h = L.createHistory();
+    L.recordHistory(h, 4, tel(1), lap(0), null, 1000);
+    L.recordHistory(h, 4, tel(2), lap(5), null, 1010);
+    L.recordHistory(h, 4, tel(3), lap(10), null, 1060);
+    assert.deepEqual(h.trails.get(4).map(p => p.speed), [1, 3], 'a sample 10 ms after the last is skipped');
+    L.recordHistory(h, 4, tel(4), lap(15), null, 1000 + 20000);
+    assert.deepEqual(h.trails.get(4).map(p => p.speed), [1, 3, 4], 'exactly 20 s old: still kept');
+    L.recordHistory(h, 4, tel(5), lap(20), null, 1060 + 20001);
+    assert.deepEqual(h.trails.get(4).map(p => p.speed), [4, 5]);
+    assert.equal(h.laps.get(4).cur.length, 5, 'the lap trace records every call');
+  });
+  test('works without lap data; unknown cars have no snapshot', () => {
+    const h = L.createHistory();
+    L.recordHistory(h, 1, tel(1), null, null, 5);
+    assert.equal(h.trails.get(1).length, 1);
+    assert.equal(L.historySnapshot(h, 1, 5).lt, null);
+    assert.equal(L.historySnapshot(h, 2, 5), null);
+  });
+  test('snapshots use ages, so the receiver can rebuild times on its own clock', () => {
+    const h = L.createHistory();
+    L.recordHistory(h, 2, tel(10), lap(0), null, 1000);
+    L.recordHistory(h, 2, tel(20), lap(4), null, 1500);
+    const snap = JSON.parse(JSON.stringify(L.historySnapshot(h, 2, 2000)));
+    assert.deepEqual(snap.trail, [1000, 10, 0.5, 0, 3, null, null, 500, 20, 0.5, 0, 3, null, null], 'packed: age, then the sample');
+    assert.deepEqual(L.historyTrail(snap, 50000), [
+      {t: 49000, speed: 10, thr: 0.5, brk: 0, gear: 3, ers: null, mode: null},
+      {t: 49500, speed: 20, thr: 0.5, brk: 0, gear: 3, ers: null, mode: null},
+    ]);
+    assert.deepEqual(L.historyLaps(snap).cur, h.laps.get(2).cur, 'lap traces come back as recorded');
+    assert.equal(L.historyLaps({trail: [], lt: null}), null);
+  });
+  test('a best lap that is also the last lap is sent once and comes back shared', () => {
+    const h = L.createHistory();
+    const at = (n, d, last) => ({m_currentLapNum: n, m_lapDistance: d, m_lastLapTimeInMS: last});
+    for (let d = 0; d < 100; d += 2) L.recordHistory(h, 0, tel(d), at(1, d, 0), null, d * 100);
+    L.recordHistory(h, 0, tel(0), at(2, 0, 90000), null, 20000);
+    const snap = JSON.parse(JSON.stringify(L.historySnapshot(h, 0, 20000)));
+    assert.equal(snap.lt.best, 'last');
+    const lt = L.historyLaps(snap);
+    assert.equal(lt.best, lt.last);
+    assert.equal(lt.best.length, 50);
+    for (let d = 0; d < 100; d += 2) L.recordHistory(h, 0, tel(d), at(2, d, 90000), null, 30000 + d * 100);
+    L.recordHistory(h, 0, tel(0), at(3, 0, 95000), null, 50000);
+    const slower = L.historyLaps(JSON.parse(JSON.stringify(L.historySnapshot(h, 0, 50000))));
+    assert.equal(slower.bestLap, 1);
+    assert.equal(slower.lastLap, 2);
+    assert.deepEqual(slower.best.map(p => p.d), h.laps.get(0).best.map(p => p.d), 'a different best lap is sent in full');
   });
 });
 

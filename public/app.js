@@ -2,7 +2,7 @@ const $ = id => document.getElementById(id);
 const {
   WEATHER, ERS_MODES, COMPOUNDS, TYRES, CAR_PARTS, DMG_KEYS, DMG_COLORS, TRACK_BUCKET_M,
   tempColor, wearColor, dmgLevel, cap, fmtTime, fmtSector, fmtGap, esc, fmtClock, gapOk, leaderGap,
-  learnTrack, recordLapTrace, traceSample, nearest, metricValue, fmtMetric, fmtDelta,
+  learnTrack, recordLapTrace, historyTrail, historyLaps, traceSample, nearest, metricValue, fmtMetric, fmtDelta,
   tyreProjection, fmtLaps, lapsColor, fmtS, fmtRate, nameOf, rejoinEstimate, battleTrend,
   ersModeName, zoneRanges, boostBadge, aeroLabel, overtakeReady, sessionLabel, lapTag, fmtSize,
 } = PitLib;
@@ -458,6 +458,8 @@ function renderDriver(s) {
   note.hidden = !restricted;
   if (restricted) note.textContent = 'This driver\'s telemetry is set to Restricted, so the game sends empty values for them.';
 
+  // the server recorded this car before the window opened: start from that, replacing anything shown so far
+  if (d.history) dmSamples.splice(0, dmSamples.length, ...historyTrail(d.history, performance.now()));
   renderDriving(t, 'dm', dmSamples, d.telemetry2, d.status);
   if (d.status) renderStatus(d.status, 'dm', s.session && s.session.packetFormat);
   dmCar.update(t, d.damage);
@@ -658,6 +660,12 @@ function renderCompare(s) {
 
   // trails for the chart
   for (const d of details.values()) {
+    // the server has been recording this car all along: start from its history, not from empty
+    if (d.history) {
+      cmpTrails.set(d.idx, historyTrail(d.history, now));
+      const lt = historyLaps(d.history);
+      if (lt) lapTraces.set(d.idx, lt);
+    }
     if (!d.telemetry) continue;
     const trail = cmpTrails.get(d.idx) || [];
     const t = d.telemetry;
@@ -812,7 +820,7 @@ function drawCompareChart() {
 
   if (byDist && series.every(p => p.length < 2)) {
     ctx.fillStyle = '#7a8195'; ctx.textAlign = 'center'; ctx.font = `600 12px ${DISPLAY_FONT}`;
-    ctx.fillText({cur: 'WAITING FOR CARS TO CROSS THE LINE', last: 'NO COMPLETED LAP RECORDED YET — KEEP COMPARE OPEN FOR A FULL LAP', best: 'NO FULL VALID LAP RECORDED YET'}[cmpLapView],
+    ctx.fillText({cur: 'WAITING FOR CARS TO CROSS THE LINE', last: 'NO COMPLETED LAP RECORDED YET', best: 'NO FULL VALID LAP RECORDED YET'}[cmpLapView],
       padL + plotW / 2, padT + plotH / 2);
   }
 

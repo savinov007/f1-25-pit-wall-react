@@ -25,6 +25,12 @@ function text(el) {
 }
 // a page value copied into this realm, so deepEqual can compare it
 const json = (p, code) => JSON.parse(JSON.stringify(p.eval(code)));
+// a server history snapshot in its packed wire form, from readable sample objects
+const {packPoints} = require('../public/lib');
+const packHistory = ({trail, lt}) => ({
+  trail: packPoints(trail, 'a'),
+  lt: lt && {...lt, cur: packPoints(lt.cur, 'd'), last: packPoints(lt.last, 'd'), best: lt.best === 'last' ? 'last' : packPoints(lt.best, 'd')},
+});
 const detailFor = (s, idx) => ({idx, telemetry: s.telemetry, status: s.status, damage: s.damage, lap: s.lap, motion: s.motion});
 
 describe('connection', () => {
@@ -378,6 +384,25 @@ describe('compare mode', () => {
     assert.match(text(you.querySelector('.ccstrat')), /^Strategy/);
     p.close();
   });
+  test('charts opened late start from the server history instead of empty', async () => {
+    const p = await boot();
+    const s = dashboardState();
+    p.push(s);
+    p.$('compareBtn').click();
+    const sample = (a, speed) => ({a, speed, thr: 1, brk: 0, gear: 4, ers: 0.5, mode: 2});
+    const lt = {lap: 3, cur: [{d: 0, ...sample(0, 100)}], last: [], lastLap: null, best: [{d: 0, ...sample(0, 90)}, {d: 50, ...sample(0, 95)}], bestLap: 2, bestTime: 90000};
+    const history = packHistory({trail: [sample(8000, 200), sample(4000, 250)], lt});
+    p.push({...s, compare: [{...detailFor(s, 2), history}, detailFor(s, 1)]});
+    const trails = json(p, '[...cmpTrails.entries()].map(([k, v]) => [k, v.length])');
+    assert.deepEqual(trails.find(([k]) => k === 2), [2, 3], 'two history samples plus the live one');
+    assert.deepEqual(json(p, 'lapTraces.get(2).best.map(x => [x.d, x.speed])'), [[0, 90], [50, 95]]);
+    // a best lap that is also the last lap arrives once, and is the same trace on the page
+    const same = {...lt, last: lt.best, best: 'last'};
+    p.push({...s, compare: [{...detailFor(s, 2), history: packHistory({trail: [], lt: same})}, detailFor(s, 1)]});
+    assert.equal(p.eval('lapTraces.get(2).best === lapTraces.get(2).last'), true);
+    assert.equal(p.eval('lapTraces.get(2).best.length'), 2);
+    p.close();
+  });
   // compare chart drawing: a sized canvas, the canvas calls it made, and recorded laps set on the page directly
   async function chartPage() {
     const p = await boot();
@@ -442,6 +467,20 @@ describe('compare mode', () => {
     draw();
     assert.ok(!labels().includes('NO FULL VALID LAP RECORDED YET'));
     assert.equal(p.drawLog.filter(c => c[0] === 'set' && c[1] === 'strokeStyle' && c[2] === '#ff2d1f').length, 1, 'the best lap is drawn');
+    p.close();
+  });
+  test('the driver window starts from the server history, even after live samples', async () => {
+    const p = await boot();
+    const s = dashboardState();
+    p.push(s);
+    p.eval('openDriver(1)');
+    p.push({...s, detail: detailFor(s, 1)});
+    assert.equal(p.eval('dmSamples.length'), 1, 'a live sample before the history arrived');
+    const trail = [3000, 2000, 1000].map(a => ({a, speed: 1, thr: 0.5, brk: 0, gear: 3, ers: 0, mode: 0}));
+    p.push({...s, detail: {...detailFor(s, 1), history: packHistory({trail, lt: null})}});
+    const t = json(p, 'dmSamples.map(x => x.t)');
+    assert.equal(t.length, 4, 'history replaced what was there, plus this message\'s sample');
+    assert.deepEqual([...t].sort((a, b) => a - b), t, 'in time order: the trace never zigzags');
     p.close();
   });
   test('chart toggles and lap-synced traces', async () => {

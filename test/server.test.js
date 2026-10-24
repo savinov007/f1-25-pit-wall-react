@@ -10,6 +10,7 @@ const {spawn} = require('child_process');
 const WebSocket = require('ws');
 const {createDashboard, listRecordings, describeRecording, teamFor, minutesToMs, localIps, demoRivals, demoFrame, demoPos} = require('../server');
 const {loadRecording} = require('../replay');
+const {historyTrail, historyLaps} = require('../public/lib');
 const {fixturePackets, ROOT} = require('./helpers');
 
 const quiet = {log() {}, warn() {}, error() {}};
@@ -272,6 +273,59 @@ describe('UDP format 2026 (F1 26)', () => {
     assert.deepEqual(d.refreshState().session.aeroZones.map(z => z.map(v => +v.toFixed(3))), [[0.6, 0.7]], 'partial zones');
   });
 
+  test('history is recorded before anyone compares, and sent once per watched car', () => {
+    const d = offline();
+    feedFixture(d); // recorded from the packets themselves: no broadcast has run
+    const shared = JSON.stringify(d.refreshState());
+    const client = {selected: null, compare: []};
+    d.handleClientMessage(client, JSON.stringify({compare: [6, 9]}));
+    const first = JSON.parse(d.messageFor(client, shared));
+    for (const c of first.compare) {
+      const trail = historyTrail(c.history, 0);
+      assert.ok(trail.length >= 1, 'a chart opened now already has data');
+      assert.ok(trail.every(p => p.t <= 0 && typeof p.ers === 'number' && typeof p.mode === 'number'));
+    }
+    const [six, nine] = first.compare.map(c => historyLaps(c.history));
+    assert.ok(six.cur.length >= 1, 'and the lap so far');
+    assert.equal(nine.cur.length, 0, 'car 9 is still behind the start line in the fixture');
+    const second = JSON.parse(d.messageFor(client, shared));
+    assert.ok(second.compare.every(c => !c.history), 'live updates carry no history');
+    d.handleClientMessage(client, JSON.stringify({compare: [9]}));
+    d.handleClientMessage(client, JSON.stringify({compare: [6, 9]}));
+    const again = JSON.parse(d.messageFor(client, shared));
+    assert.deepEqual(again.compare.map(c => !!c.history), [true, false], 'a car dropped and re-added is sent again');
+    d.handleClientMessage(client, JSON.stringify({select: 3}));
+    assert.ok(JSON.parse(d.messageFor(client, shared)).detail.history, 'the driver window is prefilled too');
+    d.handleClientMessage(client, JSON.stringify({select: 6}));
+    assert.ok(JSON.parse(d.messageFor(client, shared)).detail.history, 'a car already compared still fills the driver window');
+    assert.ok(!JSON.parse(d.messageFor(client, shared)).detail.history);
+  });
+  test('a car with nothing recorded yet gets its history once something is', () => {
+    const d = offline();
+    const client = {selected: null, compare: []};
+    d.handleClientMessage(client, JSON.stringify({compare: [6]}));
+    const shared = JSON.stringify(d.refreshState());
+    assert.equal(JSON.parse(d.messageFor(client, shared)).compare[0].history, undefined, 'no packets yet');
+    feedFixture(d);
+    assert.ok(JSON.parse(d.messageFor(client, shared)).compare[0].history);
+  });
+  test('every telemetry packet is recorded, whatever the broadcast rate (fast replays keep their detail)', () => {
+    const d = offline();
+    const packets = fixturePackets();
+    const tel = packets.filter(p => p.buf[6] === 6); // packet id 6: car telemetry
+    packets.forEach(p => d.handlePacket(p.buf));
+    const client = {selected: null, compare: [0]};
+    const lt = historyLaps(JSON.parse(d.messageFor(client, JSON.stringify(d.refreshState()))).compare[0].history);
+    assert.ok(tel.length > 5);
+    assert.ok(lt.cur.length > 1, `${lt.cur.length} lap samples from ${tel.length} telemetry packets, no broadcast`);
+  });
+  test('demo mode records every car on each frame', () => {
+    const d = offline({demo: true});
+    for (let t = 0; t <= 2000; t += 50) d.applyDemoFrame(t);
+    const client = {selected: null, compare: [0, 2]};
+    const msg = JSON.parse(d.messageFor(client, JSON.stringify(d.refreshState())));
+    for (const c of msg.compare) assert.ok(historyTrail(c.history, 0).length >= 1 && historyLaps(c.history).cur.length > 1);
+  });
   test('the last of 24 cars can be selected and compared', () => {
     const d = offline();
     feed2026(d);

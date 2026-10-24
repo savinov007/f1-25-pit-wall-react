@@ -6,7 +6,7 @@ const {WebSocketServer} = require('ws');
 const {F1TelemetryClient, constants} = require('./build/src');
 const {StrategyTracker} = require('./strategy');
 const {loadRecording, createPlayer} = require('./replay');
-const {overtakeOn} = require('./public/lib');
+const {overtakeOn, createHistory, recordHistory, historySnapshot} = require('./public/lib');
 
 const {PACKETS, TRACKS, TEAMS} = constants;
 const PUBLIC = path.join(__dirname, 'public');
@@ -419,6 +419,37 @@ function createDashboard(options = {}) {
     };
   }
 
+  // Every car's recent telemetry and lap traces, recorded whether or not anyone has a chart open,
+  // so a chart opened late is already filled (sent once per car when a client starts watching it).
+  // Recorded on every telemetry packet (demo: every frame), not on the broadcast timer, so lap traces keep
+  // their resolution when a replay plays faster than real time.
+  // The driver window and compare keep separate "already sent" sets: a car in both still fills both.
+  const history = createHistory();
+  function recordHistories() {
+    const now = Date.now();
+    if (demo) {
+      for (const r of state.rivals) {
+        const d = buildDetail(r.idx);
+        recordHistory(history, r.idx, d.telemetry, d.lap, d.status, now);
+      }
+      return;
+    }
+    if (!raw.tel || !raw.lap) return;
+    raw.lap.forEach((l, i) => {
+      // same cars as the leaderboard: resultStatus 0/1 is an empty slot
+      if (!l.m_carPosition || l.m_resultStatus < 2 || !raw.tel[i]) return;
+      recordHistory(history, i, raw.tel[i], l, raw.status && raw.status[i], now);
+    });
+  }
+  function withHistory(sent, d) {
+    if (sent.has(d.idx)) return d;
+    const snap = historySnapshot(history, d.idx, Date.now());
+    if (!snap) return d; // nothing recorded yet: try again with the next message
+    sent.add(d.idx);
+    return {...d, history: snap};
+  }
+  const sentSets = client => client.historySent || (client.historySent = {detail: new Set(), compare: new Set()});
+
   function handleClientMessage(ws, data) {
     try {
       const msg = JSON.parse(data);
@@ -426,6 +457,10 @@ function createDashboard(options = {}) {
       if ('compare' in msg) {
         ws.compare = Array.isArray(msg.compare) ? [...new Set(msg.compare.filter(validIdx))].slice(0, MAX_COMPARE) : [];
       }
+      // a car the client stops watching gets its history again when it is watched next
+      const sent = sentSets(ws);
+      for (const i of sent.detail) if (i !== ws.selected) sent.detail.delete(i);
+      for (const i of sent.compare) if (!ws.compare.includes(i)) sent.compare.delete(i);
       if ('record' in msg) (msg.record ? startRecording : stopRecording)();
       if (msg.replay && player) controlReplay(msg.replay);
     } catch (err) {
@@ -450,8 +485,9 @@ function createDashboard(options = {}) {
   function messageFor(client, shared) {
     if (client.selected === null && !client.compare.length) return shared;
     const extra = {};
-    if (client.selected !== null) extra.detail = buildDetail(client.selected);
-    if (client.compare.length) extra.compare = client.compare.map(buildDetail);
+    const sent = sentSets(client);
+    if (client.selected !== null) extra.detail = withHistory(sent.detail, buildDetail(client.selected));
+    if (client.compare.length) extra.compare = client.compare.map(i => withHistory(sent.compare, buildDetail(i)));
     return JSON.stringify({...state, ...extra});
   }
 
@@ -522,6 +558,7 @@ function createDashboard(options = {}) {
     client.on(PACKETS.carTelemetry, p => {
       raw.tel = p.m_carTelemetryData;
       onPlayer(p, 'telemetry', (pk, i) => mine(pk.m_carTelemetryData, i));
+      recordHistories();
     });
     client.on(PACKETS.lapData, p => {
       raw.lap = p.m_lapData;
@@ -562,6 +599,8 @@ function createDashboard(options = {}) {
         const uid = String(pk.m_header.m_sessionUID);
         if (bestSessionUID !== null && uid !== bestSessionUID) {
           strategy.reset();
+          history.trails.clear();
+          history.laps.clear();
           for (const k of Object.keys(bestLaps)) delete bestLaps[k];
           for (const k of Object.keys(observedBest)) delete observedBest[k];
         }
@@ -598,6 +637,7 @@ function createDashboard(options = {}) {
     state.pps = 20;
     demoHistory.push({telemetry: state.telemetry, telemetry2: state.telemetry2, status: state.status, damage: state.damage, lap: state.lap, motion: state.motion});
     if (demoHistory.length > 120) demoHistory.shift();
+    recordHistories();
   }
 
   const ports = {http: httpPort, udp: udpPort};

@@ -71,11 +71,12 @@
 
   // --- Compare chart: lap-synced traces, samples keyed by lap distance ---
   const ERS_MAX = 4000000;
+  const round3 = v => Math.round(v * 1000) / 1000; // charts don't need more, and history snapshots stay small
   // one chart sample: pedals, gear and the battery (charge 0..1 and deploy mode). Without a status packet yet
   // (it can arrive after the first telemetry) the battery is unknown (null), not an empty battery.
   const traceSample = (t, st) => ({
-    speed: t.m_speed, thr: t.m_throttle, brk: t.m_brake, gear: t.m_gear,
-    ers: st ? Math.max(0, Math.min(1, st.m_ersStoreEnergy / ERS_MAX)) : null, mode: st ? st.m_ersDeployMode : null,
+    speed: t.m_speed, thr: round3(t.m_throttle), brk: round3(t.m_brake), gear: t.m_gear,
+    ers: st ? round3(Math.max(0, Math.min(1, st.m_ersStoreEnergy / ERS_MAX))) : null, mode: st ? st.m_ersDeployMode : null,
   });
   // a lap trace good enough to be a best-lap reference: starts at the line and has no holes
   // (joining mid-lap, or a replay seek, leaves part of the lap unrecorded)
@@ -105,7 +106,7 @@
       lt.cur = lt.cur.filter(p => p.d <= dist);
       prev = lt.cur[lt.cur.length - 1];
     }
-    if (!prev || dist - prev.d >= 2) lt.cur.push({d: dist, ...traceSample(t, st)});
+    if (!prev || dist - prev.d >= 2) lt.cur.push({d: Math.round(dist * 10) / 10, ...traceSample(t, st)});
     return lt;
   }
 
@@ -128,6 +129,56 @@
     const abs = Math.abs(v);
     return sign + (m === 'speed' ? Math.round(abs) : m === 'gear' ? abs : Math.round(abs * 100) + '%');
   };
+
+  // Rolling per-car history kept by the server, so a chart opened late is already filled:
+  // trails: idx -> time samples {t, ...traceSample}; laps: idx -> lap traces as built by recordLapTrace.
+  // The trail covers the longest live chart (compare: 20 s).
+  const TRAIL_MS = 20000, TRAIL_STEP_MS = 50;
+  const createHistory = () => ({trails: new Map(), laps: new Map()});
+  function recordHistory(h, idx, t, lap, st, now) {
+    let trail = h.trails.get(idx);
+    if (!trail) h.trails.set(idx, (trail = []));
+    const last = trail[trail.length - 1];
+    if (!last || now - last.t >= TRAIL_STEP_MS) trail.push({t: now, ...traceSample(t, st)});
+    while (trail.length && now - trail[0].t > TRAIL_MS) trail.shift();
+    if (lap) recordLapTrace(h.laps, idx, t, lap, st);
+  }
+  // Wire form for one car (null when nothing is recorded). Samples are packed as flat number arrays,
+  // [x, speed, thr, brk, gear, ers, mode, x, ...], about half the size of objects with repeated keys.
+  // Trail times become ages (x = a), so client and server clocks needn't agree; lap traces keep x = d.
+  // A best lap that is also the last lap is sent once ('last').
+  const SAMPLE_KEYS = ['speed', 'thr', 'brk', 'gear', 'ers', 'mode'];
+  const STRIDE = SAMPLE_KEYS.length + 1;
+  function packPoints(pts, x, xOf = p => p[x]) {
+    const out = [];
+    for (const p of pts) out.push(xOf(p), ...SAMPLE_KEYS.map(k => p[k]));
+    return out;
+  }
+  function unpackPoints(flat, x, xOf = v => v) {
+    const pts = [];
+    for (let i = 0; i + STRIDE <= flat.length; i += STRIDE) {
+      const p = {[x]: xOf(flat[i])};
+      SAMPLE_KEYS.forEach((k, j) => { p[k] = flat[i + 1 + j]; });
+      pts.push(p);
+    }
+    return pts;
+  }
+  function historySnapshot(h, idx, now) {
+    const trail = h.trails.get(idx);
+    if (!trail) return null;
+    const lt = h.laps.get(idx);
+    return {
+      trail: packPoints(trail, 'a', p => now - p.t),
+      lt: lt ? {...lt, cur: packPoints(lt.cur, 'd'), last: packPoints(lt.last, 'd'), best: lt.best === lt.last ? 'last' : packPoints(lt.best, 'd')} : null,
+    };
+  }
+  // the receiving side: the trail on the local clock, and lap traces in the shape recordLapTrace builds
+  const historyTrail = (snap, now) => unpackPoints(snap.trail, 't', a => now - a);
+  function historyLaps(snap) {
+    if (!snap.lt) return null;
+    const last = unpackPoints(snap.lt.last, 'd');
+    return {...snap.lt, cur: unpackPoints(snap.lt.cur, 'd'), last, best: snap.lt.best === 'last' ? last : unpackPoints(snap.lt.best, 'd')};
+  }
 
   // --- Strategy projections from the server's measured rates ---
   // laps until each corner reaches the wear limit (Infinity when it isn't wearing, 0 when already past)
@@ -239,7 +290,7 @@
     ersModeName, zoneRanges, boostBadge, aeroLabel, overtakeOn, overtakeReady, sessionLabel, lapTag, fmtSize,
     WEATHER, ERS_MODES, COMPOUNDS, TYRES, CAR_PARTS, DMG_KEYS, DMG_COLORS, TRACK_BUCKET_M,
     tempColor, wearColor, dmgLevel, cap, fmtTime, fmtSector, fmtGap, esc, fmtClock, gapOk, leaderGap,
-    learnTrack, recordLapTrace, traceSample, nearest, metricValue, fmtMetric, fmtDelta,
+    learnTrack, recordLapTrace, createHistory, recordHistory, historySnapshot, historyTrail, historyLaps, packPoints, traceSample, nearest, metricValue, fmtMetric, fmtDelta,
     tyreProjection, fmtLaps, lapsColor, fmtS, fmtRate, nameOf, rejoinEstimate, battleTrend,
   };
 });
