@@ -514,11 +514,14 @@ describe('F1 26 (UDP format 2026)', () => {
     assert.equal(bat.querySelector('.batfill').style.width, '50%');
     assert.equal(bat.classList.contains('boost'), true);
     assert.match(bat.title, /overtake mode in use/);
+    assert.equal(bat.querySelector('.batlbl').textContent, 'BOOST', 'ERS mode named under the battery');
     assert.equal(p.$('aero').textContent, 'STRAIGHT');
     assert.equal(p.$('aero').classList.contains('on'), true);
     // regression: the game sets available = active all race; without Boost the battery stays calm
     p.push({...base, status: status(1), telemetry2: t2({m_overtakeAvailable: 1, m_overtakeActive: 1})});
     assert.equal(bat.classList.contains('boost'), false);
+    assert.equal(bat.querySelector('.batlbl').textContent, 'MEDIUM');
+    assert.match(bat.title, /ERS mode: MEDIUM/);
     assert.equal(p.$('aero').textContent, 'CORNER');
     assert.equal(p.$('aero').classList.contains('on'), false);
     p.push({...base, status: status(3), telemetry2: t2({m_overtakeAvailable: 1, m_overtakeActive: 1, m_overtakeActivationDistance: 150})});
