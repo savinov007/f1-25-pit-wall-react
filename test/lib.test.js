@@ -221,15 +221,15 @@ describe('battery and best-lap traces', () => {
 describe('per-car history', () => {
   const tel = speed => ({m_speed: speed, m_throttle: 0.5, m_brake: 0, m_gear: 3});
   const lap = d => ({m_currentLapNum: 1, m_lapDistance: d, m_lastLapTimeInMS: 0});
-  test('records a trail at a limited rate and forgets samples older than 20 s', () => {
+  test('records a trail at a limited rate and forgets samples older than 3 minutes', () => {
     const h = L.createHistory();
     L.recordHistory(h, 4, tel(1), lap(0), null, 1000);
     L.recordHistory(h, 4, tel(2), lap(5), null, 1010);
     L.recordHistory(h, 4, tel(3), lap(10), null, 1060);
     assert.deepEqual(h.trails.get(4).map(p => p.speed), [1, 3], 'a sample 10 ms after the last is skipped');
-    L.recordHistory(h, 4, tel(4), lap(15), null, 1000 + 20000);
-    assert.deepEqual(h.trails.get(4).map(p => p.speed), [1, 3, 4], 'exactly 20 s old: still kept');
-    L.recordHistory(h, 4, tel(5), lap(20), null, 1060 + 20001);
+    L.recordHistory(h, 4, tel(4), lap(15), null, 1000 + 180000);
+    assert.deepEqual(h.trails.get(4).map(p => p.speed), [1, 3, 4], 'exactly 3 min old: still kept');
+    L.recordHistory(h, 4, tel(5), lap(20), null, 1060 + 180001);
     assert.deepEqual(h.trails.get(4).map(p => p.speed), [4, 5]);
     assert.equal(h.laps.get(4).cur.length, 5, 'the lap trace records every call');
   });

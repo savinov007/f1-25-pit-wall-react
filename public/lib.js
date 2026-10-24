@@ -132,8 +132,8 @@
 
   // Rolling per-car history kept by the server, so a chart opened late is already filled:
   // trails: idx -> time samples {t, ...traceSample}; laps: idx -> lap traces as built by recordLapTrace.
-  // The trail covers the longest live chart (compare: 20 s).
-  const TRAIL_MS = 20000, TRAIL_STEP_MS = 50;
+  // The trail covers the longest live chart window (compare: 3 min).
+  const TRAIL_MS = 180000, TRAIL_STEP_MS = 50;
   const createHistory = () => ({trails: new Map(), laps: new Map()});
   function recordHistory(h, idx, t, lap, st, now) {
     let trail = h.trails.get(idx);

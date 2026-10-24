@@ -504,7 +504,10 @@ $('rec').onclick = () => {
 // ERS deploy mode axis labels, short enough for the chart's left margin
 const modeTick = (mode, format) => ['NONE', 'MED', 'HOT', format >= 2026 ? 'BOOST' : 'OT'][mode];
 const SLOT_COLORS = ['#ff2d1f', '#3aa0ff', '#ffb020', '#1fd166'];
-const CMP_SECONDS = 20;
+// the live trace keeps 3 minutes (as much as the server's history) and shows the chosen window of it
+const CMP_KEEP_SECONDS = 180, CMP_WINDOWS = [20, 60, 180];
+let cmpWindow = 20;
+try { const v = Number(localStorage.getItem('pitwall-cmpwin')); if (CMP_WINDOWS.includes(v)) cmpWindow = v; } catch (err) { /* default */ }
 const cmp = $('cmp');
 let cmpSel = [];
 let cmpMetric = 'speed';
@@ -575,8 +578,23 @@ $('cmpAxis').addEventListener('click', e => {
   cmpAxis = b.dataset.a;
   setTabs('cmpAxis', 'a', cmpAxis);
   $('cmpLap').hidden = cmpAxis !== 'dist';
-  $('cmpChartLbl').textContent = cmpAxis === 'dist' ? 'Lap-synced trace · by distance' : 'Live trace · last 20 s';
+  $('cmpWin').hidden = cmpAxis === 'dist';
+  syncChartLabel();
 });
+const fmtWindow = sec => (sec < 60 ? `${sec} s` : `${sec / 60} min`);
+function syncChartLabel() {
+  $('cmpChartLbl').textContent = cmpAxis === 'dist' ? 'Lap-synced trace · by distance' : `Live trace · last ${fmtWindow(cmpWindow)}`;
+}
+$('cmpWin').addEventListener('click', e => {
+  const b = e.target.closest('button');
+  if (!b) return;
+  cmpWindow = Number(b.dataset.w);
+  setTabs('cmpWin', 'w', String(cmpWindow));
+  syncChartLabel();
+  try { localStorage.setItem('pitwall-cmpwin', String(cmpWindow)); } catch (err) { /* not persisted */ }
+});
+setTabs('cmpWin', 'w', String(cmpWindow));
+syncChartLabel();
 $('cmpLap').addEventListener('click', e => {
   const b = e.target.closest('button');
   if (!b) return;
@@ -670,7 +688,7 @@ function renderCompare(s) {
     const trail = cmpTrails.get(d.idx) || [];
     const t = d.telemetry;
     trail.push({t: now, ...traceSample(t, d.status)});
-    while (trail.length && now - trail[0].t > CMP_SECONDS * 1000) trail.shift();
+    while (trail.length && now - trail[0].t > CMP_KEEP_SECONDS * 1000) trail.shift();
     cmpTrails.set(d.idx, trail);
     if (d.lap) recordLapTrace(lapTraces, d.idx, t, d.lap, d.status);
   }
@@ -765,7 +783,12 @@ function drawCompareChart() {
     xMin = 0;
     xMax = (latest && latest.session && latest.session.trackLength) || Math.max(seen, 1000);
   } else {
-    xMax = now; xMin = now - CMP_SECONDS * 1000;
+    xMax = now; xMin = now - cmpWindow * 1000;
+    // the trail holds 3 min: draw only the window (one sample before it, so the line reaches the edge)
+    series.forEach((pts, k) => {
+      const first = pts.findIndex(p => p.t >= xMin);
+      series[k] = first < 0 ? [] : pts.slice(Math.max(0, first - 1));
+    });
   }
 
   let max = cmpMetric === 'speed' ? 350 : cmpMetric === 'gear' ? 8 : cmpMetric === 'mode' ? 3 : 1;
@@ -792,7 +815,8 @@ function drawCompareChart() {
       ctx.fillText(d ? (d / 1000).toFixed(d % 1000 ? 1 : 0) + ' km' : 'START', x, h - 4);
     }
   } else {
-    for (let sec = 0; sec <= CMP_SECONDS; sec += 5) ctx.fillText(sec ? `-${sec}s` : 'now', xOf(now - sec * 1000), h - 4);
+    const step = cmpWindow <= 20 ? 5 : cmpWindow <= 60 ? 15 : 30;
+    for (let sec = 0; sec <= cmpWindow; sec += step) ctx.fillText(sec ? (sec < 60 ? `-${sec}s` : `-${fmtClock(sec)}`) : 'now', xOf(now - sec * 1000), h - 4);
   }
 
   // traces

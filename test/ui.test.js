@@ -469,6 +469,50 @@ describe('compare mode', () => {
     assert.equal(p.drawLog.filter(c => c[0] === 'set' && c[1] === 'strokeStyle' && c[2] === '#ff2d1f').length, 1, 'the best lap is drawn');
     p.close();
   });
+  test('the live trace window: 20 s, 1 min or 3 min of the same history, remembered', async () => {
+    const p = await boot();
+    const s = dashboardState();
+    p.push(s);
+    p.$('compareBtn').click();
+    assert.equal(p.$('cmpChartLbl').textContent, 'Live trace · last 20 s');
+    const cv = p.$('cmpCanvas');
+    Object.defineProperty(cv, 'clientWidth', {value: 600});
+    Object.defineProperty(cv, 'clientHeight', {value: 200});
+    // 3 minutes of history, one sample a second
+    const trail = Array.from({length: 180}, (_, i) => ({a: (179 - i) * 1000, speed: 200, thr: 1, brk: 0, gear: 6, ers: 0.5, mode: 2}));
+    p.push({...s, compare: [{...detailFor(s, 2), history: packHistory({trail, lt: null})}]});
+    assert.equal(p.eval('cmpTrails.get(2).length'), 181, 'all 3 minutes kept, plus the live sample');
+    const draw = () => {
+      p.drawLog.length = 0;
+      p.eval('drawCompareChart()');
+      return {
+        labels: p.drawLog.filter(c => c[0] === 'fillText').map(c => c[1]),
+        // trace points left of the plot area would be drawn over the axis labels
+        offPlot: p.drawLog.filter(c => c[0] === 'lineTo' && c[1] < 40).length,
+        points: p.drawLog.filter(c => c[0] === 'lineTo').length,
+      };
+    };
+    const short = draw();
+    assert.ok(short.labels.includes('-20s') && !short.labels.includes('-1:00'));
+    assert.equal(short.offPlot, 0, 'only the window is drawn');
+    p.$('cmpWin').querySelector('[data-w="180"]').click();
+    assert.equal(p.$('cmpChartLbl').textContent, 'Live trace · last 3 min');
+    assert.equal(p.w.localStorage.getItem('pitwall-cmpwin'), '180');
+    const long = draw();
+    assert.ok(long.labels.includes('-3:00') && long.labels.includes('-30s'));
+    assert.ok(long.points > short.points + 100, 'the whole 3 minutes is drawn');
+    p.$('cmpAxis').querySelector('[data-a=dist]').click();
+    assert.equal(p.$('cmpWin').hidden, true, 'no time window on the distance axis');
+    p.close();
+    const again = await boot({storage: {'pitwall-cmpwin': '60'}});
+    assert.equal(again.eval('cmpWindow'), 60);
+    assert.equal(again.$('cmpChartLbl').textContent, 'Live trace · last 1 min');
+    assert.equal(again.doc.querySelector('#cmpWin .on').dataset.w, '60');
+    again.close();
+    const bad = await boot({storage: {'pitwall-cmpwin': '999'}});
+    assert.equal(bad.eval('cmpWindow'), 20, 'an unknown stored value falls back to 20 s');
+    bad.close();
+  });
   test('the driver window starts from the server history, even after live samples', async () => {
     const p = await boot();
     const s = dashboardState();
