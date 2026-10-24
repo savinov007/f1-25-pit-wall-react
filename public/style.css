@@ -737,3 +737,14 @@ body.replaying #connText { color: var(--amber); }
 @keyframes batboost { 50% { box-shadow: 0 0 16px rgba(31, 209, 102, .75); } 0%, 100% { box-shadow: 0 0 5px rgba(31, 209, 102, .35); } }
 .dmbox .bat { width: 70px; } .dmbox .batbody { height: 22px; }
 .ccspeed .bat { width: 56px; } .ccspeed .batbody { height: 18px; } .ccspeed .batpct { font-size: 10px; } .ccspeed .batlbl { font-size: 9px; letter-spacing: .16em; }
+
+/* battery readout: the charge as a number under the gauge, not on top of the segments */
+.batpct { position: static; display: inline; font: 800 18px/1 var(--f-mono); color: var(--text); text-shadow: none; }
+.batread { display: flex; align-items: baseline; justify-content: center; gap: 2px; margin-top: 4px; }
+.batread small { font: 700 11px var(--f-mono); color: var(--dim); }
+.batbolt { font-size: 13px; color: var(--cyan); margin-right: 3px; }
+.bat.low .batpct, .bat.low .batbolt { color: var(--red-hi); }
+.bat.boost .batpct, .bat.boost .batbolt { color: var(--green); }
+.batlbl { margin-top: 2px; }
+.dmbox .batpct { font-size: 15px; }
+.ccspeed .batpct { font-size: 12px; } .ccspeed .batread small { font-size: 9px; } .ccspeed .batbolt { font-size: 10px; }
