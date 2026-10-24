@@ -756,3 +756,12 @@ body.replaying #connText { color: var(--amber); }
 .batlbl[data-mode="boost"], .batlbl[data-mode="overtake"] { color: var(--cyan); }
 
 .chip.sess { color: var(--text); border-color: var(--line2); font-variant-numeric: tabular-nums; }
+
+/* glow: whenever the driver has overtake mode (blue), stronger and faster while Boost is deployed */
+.bat.ot .batbody { animation: batglow 1.6s ease-in-out infinite; }
+.bat.ot.boost .batbody { animation: batglow 0.7s ease-in-out infinite; }
+.bat.ot .batfill { filter: drop-shadow(0 0 4px rgba(51, 214, 232, .9)); }
+@keyframes batglow {
+  0%, 100% { box-shadow: 0 0 6px 1px rgba(51, 214, 232, .45), 0 0 14px rgba(51, 214, 232, .25); }
+  50% { box-shadow: 0 0 14px 3px rgba(51, 214, 232, .95), 0 0 30px 6px rgba(51, 214, 232, .55); }
+}
