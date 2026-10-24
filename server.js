@@ -90,7 +90,8 @@ function demoFrame(t) {
   const corner = Math.abs(Math.sin(a * 3));
   const speed = Math.round(120 + 190 * (1 - corner));
   const gear = Math.max(1, Math.min(8, Math.round(speed / 40)));
-  const throttle = corner < 0.5 ? 1 : 0.2;
+  // full throttle, easing off through the middle of the lap, then a gentle ramp back (not an on/off step)
+  const throttle = corner < 0.4 ? 1 : corner < 0.65 ? 1 - ((corner - 0.4) / 0.25) * 0.8 : 0.2 + ((corner - 0.65) / 0.35) * 0.4;
   const brake = corner > 0.8 ? 0.8 : 0;
   // spread of wear and damage so every colour band is visible in demo mode
   const wearRamp = base => Math.min(100, base + lapNum * 4 + ((t % DEMO_LAP_MS) / DEMO_LAP_MS) * 4);
@@ -400,7 +401,10 @@ function createDashboard(options = {}) {
       const h = demoHistory[Math.max(0, demoHistory.length - 1 - (idx % 12) * 6)] || state;
       const wearShift = (idx % 5) * 4;
       const damage = h.damage && {...h.damage, m_tyresWear: h.damage.m_tyresWear.map(w => Math.min(100, w + wearShift))};
-      return {idx, telemetry: h.telemetry, telemetry2: h.telemetry2, status: h.status, damage, lap: h.lap, motion: h.motion};
+      // each demo car drives a little differently, so compared traces are not on top of each other
+      const telemetry = h.telemetry && {...h.telemetry, m_throttle: Math.max(0, h.telemetry.m_throttle * (1 - (idx % 4) * 0.07) - (idx % 3) * 0.03)};
+      const lap = h.lap && {...h.lap, m_lapDistance: Math.max(0, h.lap.m_lapDistance - (idx % 12) * 9)};
+      return {idx, telemetry, telemetry2: h.telemetry2, status: h.status, damage, lap, motion: h.motion};
     }
     const pick = arr => (arr && arr[idx] ? {...arr[idx]} : null);
     const m = raw.mot && raw.mot[idx];
