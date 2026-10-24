@@ -1,9 +1,94 @@
 // Replays a recording made by the dashboard's REC button to the local UDP port, with original timing.
-// Usage: node replay.js recordings/session-<time>.jsonl [--speed 2] [--port 20777] [--host 127.0.0.1] [--loop]
+// Usage: node replay.js recordings/session-<time>.f1rec [--speed 2] [--port 20777] [--host 127.0.0.1] [--loop]
 const fs = require('fs');
 const dgram = require('dgram');
+const zlib = require('zlib');
 
-const USAGE = 'Usage: node replay.js <recording.jsonl> [--speed 2] [--port 20777] [--host 127.0.0.1] [--loop]';
+const USAGE = 'Usage: node replay.js <recording.f1rec|.jsonl> [--speed 2] [--port 20777] [--host 127.0.0.1] [--loop]';
+
+// --- Recording files ---
+// Every recording is a JSON header line ({type: 'f1rec'}) then one [msSinceStart, base64] line per packet.
+//  version 1 (.jsonl): the lines as plain text.
+//  version 2 (.f1rec): the header line in plain text, padded to HEADER_BYTES so it can be rewritten in place with
+//    the packet count and duration when the recording stops; then the packet lines, brotli-compressed (lossless,
+//    about 12x smaller). Decompressed, the packet lines are byte for byte what version 1 stores.
+const REC_EXT = '.f1rec';
+const HEADER_BYTES = 512;
+const BROTLI = {params: {[zlib.constants.BROTLI_PARAM_QUALITY]: 5, [zlib.constants.BROTLI_PARAM_LGWIN]: 22}};
+const isRecordingName = name => name.endsWith(REC_EXT) || name.endsWith('.jsonl');
+const packetLine = (t, buf) => `[${t},"${buf.toString('base64')}"]\n`;
+
+function headerLine(fields) {
+  const json = JSON.stringify(fields);
+  if (json.length > HEADER_BYTES - 1) throw new Error('Recording header too long');
+  return json.padEnd(HEADER_BYTES - 1) + '\n';
+}
+
+/**
+ * Writes a version 2 recording. write(t, buf) adds a packet; the output is flushed to disk every flushMs (0: only
+ * at the end), so a crash loses at most that much. end() finishes the file and fills in the header's packet count
+ * and duration; it resolves with {packets, duration, bytes}. onBytes(n) reports the file growing.
+ */
+function createRecordingWriter(file, fields, {flushMs = 0, onBytes = () => {}, onError = () => {}} = {}) {
+  const header = {type: 'f1rec', version: 2, compression: 'br', ...fields, packets: null, duration: null};
+  const out = fs.createWriteStream(file);
+  const brotli = zlib.createBrotliCompress(BROTLI);
+  let packets = 0, duration = 0, bytes = HEADER_BYTES, failed = false, closed = false, timer = null;
+  const fail = err => {
+    if (failed) return;
+    failed = true;
+    clearInterval(timer);
+    onError(err);
+  };
+  out.on('error', fail);
+  out.on('close', () => { closed = true; });
+  brotli.on('error', fail);
+  brotli.on('data', chunk => {
+    bytes += chunk.length;
+    onBytes(bytes);
+  });
+  out.write(headerLine(header));
+  brotli.pipe(out);
+  if (flushMs > 0) timer = setInterval(() => brotli.flush(), flushMs);
+  return {
+    write(t, buf) {
+      brotli.write(packetLine(t, buf));
+      packets++;
+      duration = t;
+    },
+    end() {
+      clearInterval(timer);
+      return new Promise(resolve => {
+        const done = () => {
+          if (!failed) {
+            try {
+              const fd = fs.openSync(file, 'r+');
+              fs.writeSync(fd, headerLine({...header, packets, duration}), 0);
+              fs.closeSync(fd);
+            } catch (err) {
+              fail(err);
+            }
+          }
+          resolve({packets, duration, bytes});
+        };
+        if (closed) return done(); // the file already failed and closed
+        out.on('close', done);
+        brotli.end();
+      });
+    },
+  };
+}
+
+// The header line at the start of a file, or null
+function readHeader(buf) {
+  const nl = buf.indexOf(10);
+  try {
+    const header = JSON.parse(buf.subarray(0, nl < 0 ? buf.length : nl).toString('utf8'));
+    return header && header.type === 'f1rec' ? {header, bodyStart: nl < 0 ? buf.length : nl + 1} : null;
+  } catch (err) {
+    return null; // not JSON at all
+  }
+}
 
 function parseArgs(args) {
   const opt = (name, fallback) => {
@@ -22,20 +107,34 @@ function parseArgs(args) {
   };
 }
 
-// Reads a recording: a JSON header line ({type: 'f1rec'}) then one [msSinceStart, base64] line per packet.
+// The packet lines of a recording, decompressed: a Buffer (never one string, which caps out near 512 MB).
+// A compressed recording cut short (the game or server crashed) still gives everything up to its last flush.
+function recordingBody(file) {
+  const buf = fs.readFileSync(file);
+  const found = readHeader(buf);
+  if (!found) throw new Error('Not a recording file (missing f1rec header)');
+  let body = buf.subarray(found.bodyStart);
+  if (found.header.compression === 'br') body = zlib.brotliDecompressSync(body, {finishFlush: zlib.constants.BROTLI_OPERATION_FLUSH});
+  return {header: found.header, body};
+}
+
+// Reads a recording of either version: {header, packets: [{t, buf}]}. Only a cut-off last line is skipped.
 function loadRecording(file) {
-  const lines = fs.readFileSync(file, 'utf8').split('\n').filter(Boolean);
-  let header = null;
-  try {
-    header = lines.length ? JSON.parse(lines[0]) : null;
-  } catch (err) {
-    // not JSON at all
+  const {header, body} = recordingBody(file);
+  const packets = [];
+  for (let start = 0, line = 2; start < body.length; line++) {
+    let end = body.indexOf(10, start);
+    if (end < 0) end = body.length;
+    if (end > start) {
+      try {
+        const [t, b64] = JSON.parse(body.toString('utf8', start, end));
+        packets.push({t, buf: Buffer.from(b64, 'base64')});
+      } catch (err) {
+        if (end < body.length) throw new Error(`Damaged recording: line ${line} is not a packet`);
+      }
+    }
+    start = end + 1;
   }
-  if (!header || header.type !== 'f1rec') throw new Error('Not a recording file (missing f1rec header)');
-  const packets = lines.slice(1).map(l => {
-    const [t, b64] = JSON.parse(l);
-    return {t, buf: Buffer.from(b64, 'base64')};
-  });
   if (!packets.length) throw new Error('Recording has no packets');
   return {header, packets};
 }
@@ -163,7 +262,10 @@ function createPlayer(packets, {send, speed = 1, loop = false, autoplay = true, 
   return player;
 }
 
-module.exports = {parseArgs, loadRecording, replay, createPlayer, SPEEDS, USAGE};
+module.exports = {
+  parseArgs, loadRecording, recordingBody, readHeader, createRecordingWriter, headerLine, packetLine, isRecordingName,
+  replay, createPlayer, SPEEDS, USAGE, REC_EXT, HEADER_BYTES,
+};
 
 if (require.main === module) {
   const args = parseArgs(process.argv.slice(2));

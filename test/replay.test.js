@@ -5,7 +5,12 @@ const os = require('os');
 const path = require('path');
 const dgram = require('dgram');
 const {spawnSync} = require('child_process');
-const {parseArgs, loadRecording, replay, createPlayer, SPEEDS, USAGE} = require('../replay');
+const zlib = require('zlib');
+const {
+  parseArgs, loadRecording, recordingBody, createRecordingWriter, headerLine, packetLine, isRecordingName,
+  replay, createPlayer, SPEEDS, USAGE, REC_EXT, HEADER_BYTES,
+} = require('../replay');
+const {compressRecording, main: compressMain} = require('../scripts/compress-recordings');
 const {FIXTURE, ROOT} = require('./helpers');
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pitwall-replay-'));
@@ -50,6 +55,197 @@ describe('loading recordings', () => {
     assert.throws(() => loadRecording(write('b.txt', 'hello\n')), /Not a recording file/);
     assert.throws(() => loadRecording(write('c.jsonl', '')), /Not a recording file/);
     assert.throws(() => loadRecording(write('d.jsonl', '{"type":"f1rec"}\n')), /no packets/);
+  });
+});
+
+// the fixture written as a compressed (version 2) recording
+async function compressedFixture(name, opts) {
+  const file = path.join(dir, name);
+  const {header, packets} = loadRecording(FIXTURE);
+  const w = createRecordingWriter(file, {startedAt: header.startedAt, udpPort: 20777}, opts);
+  for (const p of packets) w.write(p.t, p.buf);
+  return {file, packets, result: await w.end()};
+}
+const sameData = (a, b) => a.length === b.length && a.every((p, i) => p.t === b[i].t && p.buf.equals(b[i].buf));
+const quietLog = () => {
+  const lines = [];
+  return {lines, log: {log: m => lines.push(m), error: m => lines.push('ERROR ' + m)}};
+};
+
+describe('compressed recordings', () => {
+  test('round trip: every packet comes back exactly, the header knows the count and length', async () => {
+    const {file, packets, result} = await compressedFixture('round.f1rec');
+    assert.deepEqual(result, {packets: 321, duration: packets[320].t, bytes: fs.statSync(file).size});
+    const rec = loadRecording(file);
+    assert.ok(sameData(rec.packets, packets));
+    assert.equal(rec.header.type, 'f1rec');
+    assert.equal(rec.header.version, 2);
+    assert.equal(rec.header.compression, 'br');
+    assert.equal(rec.header.udpPort, 20777);
+    assert.equal(rec.header.packets, 321);
+    assert.equal(rec.header.duration, packets[320].t);
+    assert.equal(fs.readFileSync(file).indexOf(10), HEADER_BYTES - 1, 'a fixed-size header line');
+  });
+  test('the packet lines decompress byte for byte to what a plain recording stores', async () => {
+    const {file} = await compressedFixture('bytes.f1rec');
+    const plain = fs.readFileSync(FIXTURE);
+    assert.ok(recordingBody(file).body.equals(plain.subarray(plain.indexOf(10) + 1)));
+  });
+  test('much smaller than the plain recording', async () => {
+    const {file} = await compressedFixture('small.f1rec');
+    const ratio = fs.statSync(FIXTURE).size / fs.statSync(file).size;
+    assert.ok(ratio > 5, `only ${ratio.toFixed(1)}x smaller`);
+  });
+  test('flushed while recording, so a crash keeps what was written', async () => {
+    const file = path.join(dir, 'flush.f1rec');
+    const packets = loadRecording(FIXTURE).packets;
+    const w = createRecordingWriter(file, {}, {flushMs: 10});
+    try {
+      packets.slice(0, 100).forEach(p => w.write(p.t, p.buf));
+      const size = () => (fs.existsSync(file) ? fs.statSync(file).size : 0);
+      const t0 = Date.now();
+      while (size() <= HEADER_BYTES && Date.now() - t0 < 3000) await new Promise(r => setTimeout(r, 10));
+      // the file as it is now, before end(): what a crash would leave
+      const crashed = write('crashed.f1rec', fs.readFileSync(file));
+      const rec = loadRecording(crashed);
+      assert.ok(sameData(rec.packets, packets.slice(0, 100)), 'everything up to the flush');
+      assert.equal(rec.header.duration, null, 'never stopped: no length in the header');
+    } finally {
+      await w.end(); // or its flush timer keeps the process alive
+    }
+  });
+  test('a compressed file cut mid-block still gives the packets before the cut', async () => {
+    const {file, packets} = await compressedFixture('cut.f1rec');
+    const buf = fs.readFileSync(file);
+    const rec = loadRecording(write('cut2.f1rec', buf.subarray(0, buf.length - 200)));
+    assert.ok(rec.packets.length > 200 && rec.packets.length < 321);
+    assert.ok(sameData(rec.packets, packets.slice(0, rec.packets.length)));
+  });
+  test('damaged files: a cut-off last line is skipped, a broken line in the middle is an error', () => {
+    const line = packetLine(5, Buffer.from([1, 2, 3]));
+    const head = '{"type":"f1rec"}\n';
+    assert.equal(loadRecording(write('tail.jsonl', head + line + line.slice(0, 6))).packets.length, 1);
+    assert.equal(loadRecording(write('crlf-free.jsonl', head + '\n\n' + line)).packets.length, 1, 'blank lines ignored');
+    assert.throws(() => loadRecording(write('mid.jsonl', head + line + 'garbage\n' + line)), /Damaged recording: line 3/);
+    const bad = write('notbrotli.f1rec', headerLine({type: 'f1rec', compression: 'br'}) + 'definitely not brotli');
+    assert.throws(() => loadRecording(bad));
+  });
+  test('a write that fails reports it, and end() still finishes', async () => {
+    const errors = [];
+    const w = createRecordingWriter(path.join(dir, 'missing-folder', 'x.f1rec'), {}, {flushMs: 5, onError: e => errors.push(e)});
+    w.write(0, Buffer.from([1]));
+    const t0 = Date.now();
+    while (!errors.length && Date.now() - t0 < 3000) await new Promise(r => setTimeout(r, 5));
+    assert.equal(errors[0].code, 'ENOENT');
+    assert.deepEqual(await w.end(), {packets: 1, duration: 0, bytes: HEADER_BYTES});
+  });
+  test('a file removed while recording reports that its header could not be finished', async () => {
+    const file = path.join(dir, 'vanished.f1rec');
+    const errors = [];
+    const w = createRecordingWriter(file, {}, {onError: e => errors.push(e)});
+    w.write(0, Buffer.from([1]));
+    while (!fs.existsSync(file)) await new Promise(r => setTimeout(r, 5));
+    fs.unlinkSync(file);
+    const result = await w.end();
+    assert.equal(result.packets, 1);
+    assert.equal(errors[0].code, 'ENOENT');
+  });
+  test('header line limits and recording file names', () => {
+    assert.equal(headerLine({type: 'f1rec'}).length, HEADER_BYTES);
+    assert.throws(() => headerLine({type: 'f1rec', note: 'x'.repeat(HEADER_BYTES)}), /too long/);
+    assert.equal(REC_EXT, '.f1rec');
+    assert.ok(isRecordingName('a.f1rec') && isRecordingName('a.jsonl'));
+    assert.ok(!isRecordingName('a.f1rec.tmp') && !isRecordingName('a.json'));
+  });
+});
+
+describe('compressing old recordings', () => {
+  const copy = name => {
+    const f = path.join(dir, name);
+    fs.copyFileSync(FIXTURE, f);
+    fs.utimesSync(f, new Date(2024, 0, 2), new Date(2024, 0, 2));
+    return f;
+  };
+  test('converts losslessly, keeps the date, removes the original', async () => {
+    const f = copy('old1.jsonl');
+    const r = await compressRecording(f);
+    assert.equal(r.out, f.replace(/\.jsonl$/, '.f1rec'));
+    assert.equal(fs.existsSync(f), false);
+    assert.ok(r.after < r.before / 5);
+    assert.equal(r.packets, 321);
+    assert.ok(sameData(loadRecording(r.out).packets, loadRecording(FIXTURE).packets));
+    assert.equal(loadRecording(r.out).header.startedAt, loadRecording(FIXTURE).header.startedAt, 'header fields kept');
+    assert.equal(fs.statSync(r.out).mtime.getTime(), new Date(2024, 0, 2).getTime(), 'same place in the replay list');
+  });
+  test('--keep keeps the original; already compressed or other files are skipped', async () => {
+    const f = copy('old2.jsonl');
+    await compressRecording(f, {keep: true});
+    assert.ok(fs.existsSync(f));
+    assert.match((await compressRecording(f)).skipped, /already exists/);
+    assert.match((await compressRecording(f.replace(/\.jsonl$/, '.f1rec'))).skipped, /not a plain/);
+  });
+  test('a recording that cannot be read is left alone and reported', async () => {
+    const bad = write('broken.jsonl', '{"type":"f1rec"}\n[0,"AA=="]\nnope\n[1,"AA=="]\n');
+    const {lines, log} = quietLog();
+    const code = await compressMain([bad], {log});
+    assert.equal(code, 1);
+    assert.ok(fs.existsSync(bad));
+    assert.equal(fs.existsSync(bad.replace(/\.jsonl$/, '.f1rec')), false);
+    assert.equal(fs.existsSync(bad.replace(/\.jsonl$/, '.f1rec.tmp')), false);
+    assert.match(lines[0], /^ERROR Could not compress .*Damaged recording/);
+  });
+  test('if the compressed copy does not read back identical, nothing is replaced or removed', async () => {
+    const f = copy('mismatch.jsonl');
+    const replayModule = require('../replay');
+    const real = replayModule.loadRecording;
+    // the copy reads back with one byte different
+    replayModule.loadRecording = file => {
+      const rec = real(file);
+      if (file.endsWith('.tmp')) rec.packets[100].buf[10] ^= 1;
+      return rec;
+    };
+    try {
+      await assert.rejects(compressRecording(f), /does not match; original kept/);
+    } finally {
+      replayModule.loadRecording = real;
+    }
+    assert.ok(fs.existsSync(f));
+    assert.equal(fs.existsSync(f.replace(/\.jsonl$/, '.f1rec')), false);
+    assert.equal(fs.existsSync(f.replace(/\.jsonl$/, '.f1rec.tmp')), false);
+  });
+  test('a copy that cannot be written leaves the original and no half-written file', {skip: process.getuid && process.getuid() === 0}, async () => {
+    const folder = fs.mkdtempSync(path.join(dir, 'ro-'));
+    const f = path.join(folder, 'ro.jsonl');
+    fs.copyFileSync(FIXTURE, f);
+    fs.chmodSync(folder, 0o500);
+    try {
+      await assert.rejects(compressRecording(f), {code: 'EACCES'});
+      assert.deepEqual(fs.readdirSync(folder), ['ro.jsonl']);
+    } finally {
+      fs.chmodSync(folder, 0o700);
+    }
+  });
+  test('with no files named it does every .jsonl in the folder and prints the totals', async () => {
+    const folder = fs.mkdtempSync(path.join(dir, 'recs-'));
+    fs.copyFileSync(FIXTURE, path.join(folder, 'a.jsonl'));
+    fs.copyFileSync(FIXTURE, path.join(folder, 'b.jsonl'));
+    fs.writeFileSync(path.join(folder, 'notes.txt'), 'x');
+    const {lines, log} = quietLog();
+    assert.equal(await compressMain([], {dir: folder, log}), 0);
+    assert.deepEqual(fs.readdirSync(folder).sort(), ['a.f1rec', 'b.f1rec', 'notes.txt']);
+    assert.match(lines[0], /^a\.f1rec: [\d.]+ MB -> [\d.]+ MB \([\d.]+x smaller, 321 packets checked\)$/);
+    assert.match(lines[2], /^Total: /);
+    const empty = quietLog();
+    assert.equal(await compressMain([], {dir: path.join(folder, 'missing'), log: empty.log}), 0);
+    assert.deepEqual(empty.lines, ['No .jsonl recordings to compress']);
+    const kept = quietLog();
+    fs.copyFileSync(FIXTURE, path.join(folder, 'c.jsonl'));
+    await compressMain(['--keep'], {dir: folder, log: kept.log});
+    assert.match(kept.lines.at(-1), /originals kept/);
+    assert.ok(fs.existsSync(path.join(folder, 'c.jsonl')));
+    const skip = quietLog();
+    await compressMain([path.join(folder, 'c.jsonl')], {log: skip.log});
+    assert.match(skip.lines[0], /^Skipped .*already exists/);
   });
 });
 
