@@ -780,3 +780,10 @@ body.replaying #connText { color: var(--amber); }
 .dmbox .batbody { height: clamp(26px, 5.4cqh, 38px); }
 .dmbox .batpct { font-size: clamp(14px, 2.8cqh, 20px); }
 .dmbox .batlbl { font-size: clamp(11px, 2.2cqh, 15px); }
+
+/* popup: smaller battery, and room between the mode label and the aero badge */
+.dmbox .bat { width: clamp(70px, 11cqw, 100px); }
+.dmbox .batbody { height: clamp(22px, 4.4cqh, 30px); }
+.dmbox .batpct { font-size: clamp(12px, 2.4cqh, 17px); }
+.dmbox .batlbl { font-size: clamp(10px, 1.9cqh, 13px); }
+.bat ~ .drs.aero, .dmbox .bat ~ .drs.aero { margin-top: 12px; }
