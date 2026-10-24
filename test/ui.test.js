@@ -750,7 +750,7 @@ describe('replay mode', () => {
 });
 
 describe('lap type tags', () => {
-  test('standings tag flying, in and out laps', async () => {
+  test('standings tag flying and out laps', async () => {
     const p = await boot();
     const s = dashboardState();
     s.rivals.forEach(r => { r.driverStatus = 4; r.overtake = 0; r.pit = 0; r.penalty = 0; r.wrongWay = 0; });
@@ -762,7 +762,7 @@ describe('lap type tags', () => {
     const tags = i => [...p.doc.querySelectorAll('.srow')[i].querySelectorAll('.tag')].map(t => t.textContent);
     assert.deepEqual(tags(0), ['FLY']);
     assert.deepEqual(tags(1), ['OUT']);
-    assert.deepEqual(tags(3), ['IN']);
+    assert.deepEqual(tags(3), [], 'in lap: no tag');
     assert.deepEqual(tags(5), [], 'garage: no tag');
     assert.deepEqual(tags(6), [], 'plain on track: no tag');
     assert.equal(p.doc.querySelectorAll('.srow')[0].querySelector('.tag.fly').title, 'Flying lap');

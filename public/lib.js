@@ -159,7 +159,7 @@
   }
 
   // lap type from the game's driver status (0 garage, 1 flying lap, 2 in lap, 3 out lap, 4 on track): a standings tag
-  const LAP_TAGS = {1: {label: 'FLY', cls: 'fly', title: 'Flying lap'}, 2: {label: 'IN', cls: 'inl', title: 'In lap'}, 3: {label: 'OUT', cls: 'out', title: 'Out lap'}};
+  const LAP_TAGS = {1: {label: 'FLY', cls: 'fly', title: 'Flying lap'}, 3: {label: 'OUT', cls: 'out', title: 'Out lap'}};
   const lapTag = driverStatus => LAP_TAGS[driverStatus] || null;
 
   // file size for the replay list

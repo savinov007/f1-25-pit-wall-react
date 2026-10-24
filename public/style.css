@@ -696,7 +696,6 @@ body.replaying #connText { color: var(--amber); }
 /* lap type tags in the standings */
 .srow .tag.fly { background: var(--purple); color: #fff; }
 .srow .tag.out { background: var(--faint); color: #fff; }
-.srow .tag.inl { background: var(--orange); color: #1a0a00; }
 
 /* saved replays list */
 .rlover { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; background: rgba(4, 5, 8, .7); backdrop-filter: blur(3px); }
