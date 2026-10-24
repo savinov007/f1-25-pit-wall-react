@@ -984,3 +984,13 @@ describe('battery glow', () => {
     assert.match(css, /@keyframes batglow/);
   });
 });
+
+describe('ERS mode label colours', () => {
+  test('medium is green, hotlap amber, boost cyan', () => {
+    const css = require('fs').readFileSync(require('path').join(__dirname, '..', 'public', 'style.css'), 'utf8');
+    const last = mode => [...css.matchAll(new RegExp(`\\.batlbl\\[data-mode="${mode}"\\][^{]*\\{\\s*color:\\s*var\\(--(\\w+)\\)`, 'g'))].pop()[1];
+    assert.equal(last('medium'), 'green');
+    assert.equal(last('hotlap'), 'amber');
+    assert.equal(last('boost'), 'cyan');
+  });
+});

@@ -765,3 +765,5 @@ body.replaying #connText { color: var(--amber); }
   0%, 100% { box-shadow: 0 0 6px 1px rgba(51, 214, 232, .45), 0 0 14px rgba(51, 214, 232, .25); }
   50% { box-shadow: 0 0 14px 3px rgba(51, 214, 232, .95), 0 0 30px 6px rgba(51, 214, 232, .55); }
 }
+
+.batlbl[data-mode="medium"] { color: var(--green); }
