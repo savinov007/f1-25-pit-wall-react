@@ -311,6 +311,50 @@ describe('dashboard arrangement', () => {
   });
 });
 
+describe('official corners on the game outline', () => {
+  // an asymmetric closed shape, as game outline points [bucket, x, z] 8 m apart along it (lap distance = bucket * 8)
+  const shape = u => [Math.cos(u) * (300 + 80 * Math.cos(3 * u)) + 60 * Math.sin(2 * u), Math.sin(u) * (180 + 50 * Math.sin(u))];
+  const n = 600;
+  const gamePts = Array.from({length: n}, (_, k) => [k, ...shape((k / n) * 2 * Math.PI)]);
+  // the game's lap distance for a point on the shape: its bucket's middle
+  const dOf = k => k * L.TRACK_BUCKET_M + L.TRACK_BUCKET_M / 2;
+  const cornerKs = [40, 130, 250, 380, 520];
+  // the same shape as official data: rotated, scaled, shifted, mirrored, run the other way, starting elsewhere
+  function officialFrom({rotate = 0.7, scale = 13, mirror = true, reverse = true, start = 211} = {}) {
+    const tf = ([x, z]) => {
+      const y = mirror ? -z : z;
+      return [Math.round((x * Math.cos(rotate) - y * Math.sin(rotate)) * scale + 4000), Math.round((x * Math.sin(rotate) + y * Math.cos(rotate)) * scale - 900)];
+    };
+    let outline = gamePts.map(p => tf([p[1], p[2]])).filter((p, i) => i % 2 === 0);
+    if (reverse) outline.reverse();
+    outline = outline.slice(start).concat(outline.slice(0, start));
+    const corners = cornerKs.map((k, i) => { const [x, y] = tf([gamePts[k][1], gamePts[k][2]]); return {n: String(i + 1), x, y}; });
+    return {outline, corners};
+  }
+  test('corners land at their lap distance however the official data is oriented', () => {
+    for (const opts of [{}, {mirror: false}, {reverse: false}, {mirror: false, reverse: false, start: 0, rotate: 0, scale: 1}, {rotate: -2.5, scale: 2.5}]) {
+      const got = L.fitCorners(gamePts, officialFrom(opts));
+      assert.deepEqual(got.map(c => c.n), ['1', '2', '3', '4', '5'], JSON.stringify(opts));
+      got.forEach((c, i) => assert.ok(Math.abs(c.d - dOf(cornerKs[i])) <= 16, `${JSON.stringify(opts)}: T${c.n} at ${c.d}, expected ${dOf(cornerKs[i])}`));
+    }
+  });
+  test('sorted by lap distance, with the official labels (letters kept)', () => {
+    const off = officialFrom();
+    off.corners = [off.corners[3], off.corners[4], off.corners[0], off.corners[1], off.corners[2]].map((c, i) => ({...c, n: ['12', '12A', '1', '2', '3'][i]}));
+    assert.deepEqual(L.fitCorners(gamePts, off).map(c => c.n), ['1', '2', '3', '12', '12A'], 'official order may start anywhere: once round the lap');
+  });
+  test('a different shape, corners in a muddled order, or missing data give no corners', () => {
+    const circle = {outline: Array.from({length: 200}, (_, i) => [Math.cos(i / 31.8) * 100, Math.sin(i / 31.8) * 100]), corners: [{n: '1', x: 100, y: 0}]};
+    assert.deepEqual(L.fitCorners(gamePts, circle), [], 'not this track');
+    const muddled = officialFrom();
+    muddled.corners = [muddled.corners[0], muddled.corners[3], muddled.corners[1], muddled.corners[4], muddled.corners[2]];
+    assert.deepEqual(L.fitCorners(gamePts, muddled), []);
+    assert.deepEqual(L.fitCorners(gamePts, undefined), []);
+    assert.deepEqual(L.fitCorners(gamePts.slice(0, 5), officialFrom()), [], 'too little outline');
+    assert.deepEqual(L.fitCorners(gamePts, {outline: [], corners: []}), []);
+  });
+});
+
 describe('chart helpers', () => {
   const pts = [0, 10, 20, 30].map(d => ({d}));
   test('nearest sample by binary search', () => {

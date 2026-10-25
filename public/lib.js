@@ -69,6 +69,75 @@
     return track;
   }
 
+  // --- Corners: official corner numbers placed on the game's own outline ---
+  // A closed polyline resampled to n points evenly spaced along it.
+  function resample(pts, n) {
+    const seg = pts.map((p, i) => { const q = pts[(i + 1) % pts.length]; return Math.hypot(q[0] - p[0], q[1] - p[1]); });
+    const total = seg.reduce((a, b) => a + b, 0);
+    const out = [];
+    for (let k = 0, i = 0, acc = 0; k < n; k++) {
+      const at = (k / n) * total;
+      while (i < seg.length - 1 && acc + seg[i] < at) acc += seg[i++];
+      const f = seg[i] ? (at - acc) / seg[i] : 0, p = pts[i], q = pts[(i + 1) % pts.length];
+      out.push([p[0] + (q[0] - p[0]) * f, p[1] + (q[1] - p[1]) * f]);
+    }
+    return out;
+  }
+  // Best rotation + scale + shift taking points a onto b (2D Procrustes): {err, apply(p)}, err as an RMS distance.
+  function similarity(a, b) {
+    const n = a.length, ma = [0, 0], mb = [0, 0];
+    for (let i = 0; i < n; i++) { ma[0] += a[i][0] / n; ma[1] += a[i][1] / n; mb[0] += b[i][0] / n; mb[1] += b[i][1] / n; }
+    let dot = 0, cross = 0, na = 0, nb = 0;
+    for (let i = 0; i < n; i++) {
+      const ax = a[i][0] - ma[0], ay = a[i][1] - ma[1], bx = b[i][0] - mb[0], by = b[i][1] - mb[1];
+      dot += ax * bx + ay * by; cross += ax * by - ay * bx; na += ax * ax + ay * ay; nb += bx * bx + by * by;
+    }
+    const c = dot / na, s = cross / na; // scale * cos, scale * sin
+    return {
+      err: Math.sqrt(Math.max(0, nb - (dot * dot + cross * cross) / na) / n),
+      apply: p => [c * (p[0] - ma[0]) - s * (p[1] - ma[1]) + mb[0], s * (p[0] - ma[0]) + c * (p[1] - ma[1]) + mb[1]],
+    };
+  }
+  const FIT_N = 256, FIT_MAX_ERR = 0.03;
+  // Official corners ({outline: [[x, y]], corners: [{n, x, y}]}, any coordinate system) placed on the game outline
+  // (points: [[bucket, x, z]] around the lap): [{n, d}] with d in metres of lap distance, sorted by d. The official
+  // outline is fitted onto the game's trying both directions, a mirror image (the axes may be flipped) and every
+  // start point, so the game's lap distance stays the authority. A poor fit, or corners that come out of
+  // order along the lap, gives [] rather than wrong numbers.
+  function fitCorners(points, official) {
+    if (!official || !points || points.length < 16 || !official.outline || official.outline.length < 16) return [];
+    const game = resample(points.map(p => [p[1], p[2]]), FIT_N);
+    let best = null;
+    for (const mirror of [1, -1]) {
+      for (const reverse of [false, true]) {
+        const src = official.outline.map(([x, y]) => [x, y * mirror]);
+        if (reverse) src.reverse();
+        const ref = resample(src, FIT_N);
+        for (let off = 0; off < FIT_N; off++) {
+          const shifted = ref.slice(off).concat(ref.slice(0, off));
+          const fit = similarity(shifted, game);
+          if (!best || fit.err < best.err) best = {...fit, mirror};
+        }
+      }
+    }
+    const cx = game.reduce((a, p) => a + p[0], 0) / FIT_N, cz = game.reduce((a, p) => a + p[1], 0) / FIT_N;
+    const size = Math.sqrt(game.reduce((a, p) => a + (p[0] - cx) ** 2 + (p[1] - cz) ** 2, 0) / FIT_N);
+    if (!(best.err <= size * FIT_MAX_ERR)) return [];
+    const placed = official.corners.map(c => {
+      const [x, z] = best.apply([c.x, c.y * best.mirror]);
+      let k = points[0][0], dist = Infinity;
+      for (const p of points) {
+        const dd = (p[1] - x) ** 2 + (p[2] - z) ** 2;
+        if (dd < dist) { dist = dd; k = p[0]; }
+      }
+      return {n: c.n, d: k * TRACK_BUCKET_M + TRACK_BUCKET_M / 2};
+    });
+    // in official order the corners go round the lap once: at most one step back (across the start line)
+    const backs = placed.filter((c, i) => i && c.d < placed[i - 1].d).length;
+    if (backs > 1) return [];
+    return placed.sort((a, b) => a.d - b.d);
+  }
+
   // --- Compare chart: lap-synced traces, samples keyed by lap distance ---
   const ERS_MAX = 4000000;
   const round3 = v => Math.round(v * 1000) / 1000; // charts don't need more, and history snapshots stay small
@@ -314,6 +383,7 @@
     WEATHER, ERS_MODES, COMPOUNDS, TYRES, CAR_PARTS, DMG_KEYS, DMG_COLORS, TRACK_BUCKET_M,
     tempColor, wearColor, dmgLevel, cap, fmtTime, fmtSector, fmtGap, esc, fmtClock, gapOk, leaderGap,
     MAX_COLS, normalizeArrangement, moveSection,
+    fitCorners,
     learnTrack, recordLapTrace, createHistory, recordHistory, historySnapshot, historyTrail, historyLaps, packPoints, traceSample, nearest, metricValue, fmtMetric, fmtDelta,
     tyreProjection, fmtLaps, lapsColor, fmtS, fmtRate, nameOf, rejoinEstimate, battleTrend,
   };
