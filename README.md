@@ -26,7 +26,7 @@ Then open http://localhost:3000. The first screen asks which format the game sen
 - **Standings**: team colours, LAST / BEST toggle with the delta to the fastest lap, interval or gap to the leader, tyre compound, and tags for pit, flying and out laps, penalties, overtake mode and wrong-way driving.
 - **Strategy models**: tyre wear rate and laps until a wear limit, pace trend, gap trend to the cars ahead and behind, measured pit loss and where you would rejoin.
 - **Rival popup**: click a driver for a floating, draggable, resizable window with their full telemetry.
-- **Compare mode**: up to four drivers side by side, with a live trace chart or a lap-synced chart to see the difference at the same corner.
+- **Compare mode**: up to four drivers side by side, with a live trace chart or a lap-synced chart to see the difference at the same corner. Both charts, and the pedal traces, mark the corners (T1, T2, …).
 - **Custom layout**: the Layout button opens a dialog where you drag sections into up to four columns, in any order
   (arrow keys work too); drag the dividers between sections to resize them. Both are remembered.
 - **Recording and replay**: the REC button saves the raw packets, compressed losslessly (about 12× smaller); the **Replays** button lists saved recordings and opens one in a new tab with a floating player (play / pause, seek, ±10 s, loop, 0.25× to 10×).

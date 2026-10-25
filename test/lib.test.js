@@ -159,7 +159,9 @@ describe('battery and best-lap traces', () => {
   });
   test('samples are rounded so history snapshots stay small', () => {
     const s = L.traceSample({m_speed: 200, m_throttle: 0.123456, m_brake: 0.98765, m_gear: 6}, st(1234567, 1));
-    assert.deepEqual(s, {speed: 200, thr: 0.123, brk: 0.988, gear: 6, ers: 0.309, mode: 1});
+    assert.deepEqual(s, {speed: 200, thr: 0.123, brk: 0.988, gear: 6, ers: 0.309, mode: 1, ld: null}, 'no lap data: position unknown');
+    assert.equal(L.traceSample({m_speed: 1}, null, {m_lapDistance: 1234.6}).ld, 1235, 'whole metres');
+    assert.equal(L.traceSample({m_speed: 1}, null, {m_lapDistance: -40}).ld, null, 'before the line on lap 1');
     const traces = new Map();
     L.recordLapTrace(traces, 0, tel(1), lap(1, 12.3456));
     assert.equal(traces.get(0).cur[0].d, 12.3);
@@ -245,10 +247,10 @@ describe('per-car history', () => {
     L.recordHistory(h, 2, tel(10), lap(0), null, 1000);
     L.recordHistory(h, 2, tel(20), lap(4), null, 1500);
     const snap = JSON.parse(JSON.stringify(L.historySnapshot(h, 2, 2000)));
-    assert.deepEqual(snap.trail, [1000, 10, 0.5, 0, 3, null, null, 500, 20, 0.5, 0, 3, null, null], 'packed: age, then the sample');
+    assert.deepEqual(snap.trail, [1000, 10, 0.5, 0, 3, null, null, 0, 500, 20, 0.5, 0, 3, null, null, 4], 'packed: age, then the sample');
     assert.deepEqual(L.historyTrail(snap, 50000), [
-      {t: 49000, speed: 10, thr: 0.5, brk: 0, gear: 3, ers: null, mode: null},
-      {t: 49500, speed: 20, thr: 0.5, brk: 0, gear: 3, ers: null, mode: null},
+      {t: 49000, speed: 10, thr: 0.5, brk: 0, gear: 3, ers: null, mode: null, ld: 0},
+      {t: 49500, speed: 20, thr: 0.5, brk: 0, gear: 3, ers: null, mode: null, ld: 4},
     ]);
     assert.deepEqual(L.historyLaps(snap).cur, h.laps.get(2).cur, 'lap traces come back as recorded');
     assert.equal(L.historyLaps({trail: [], lt: null}), null);
@@ -384,6 +386,35 @@ describe('official corners on the game outline', () => {
     assert.deepEqual(L.fitCorners(gamePts, undefined), []);
     assert.deepEqual(L.fitCorners(gamePts.slice(0, 5), officialFrom()), [], 'too little outline');
     assert.deepEqual(L.fitCorners(gamePts, {outline: [], corners: []}), []);
+  });
+});
+
+describe('corner passes on time charts', () => {
+  const corners = [{n: '1', d: 300}, {n: '2', d: 900}, {n: '16', d: 5300}];
+  const run = lds => lds.map((ld, i) => ({t: i * 100, ld}));
+  const L5400 = 5400;
+  test('a pass where the trace went through a corner, at the later sample', () => {
+    assert.deepEqual(L.cornerPasses(run([250, 299, 300, 350, 899, 905]), corners, L5400), [{t: 200, n: '1'}, {t: 500, n: '2'}]);
+  });
+  test('crossing the line: corners before and after it, in order', () => {
+    assert.deepEqual(L.cornerPasses(run([5290, 5350, 20, 310]), corners, L5400), [{t: 100, n: '16'}, {t: 300, n: '1'}]);
+    const atLine = [{n: '1', d: 10}, {n: '16', d: 5395}];
+    assert.deepEqual(L.cornerPasses(run([5390, 20]), atLine, L5400).map(p => p.n), ['1', '16'], 'both sides of the line in one step');
+    assert.deepEqual(L.cornerPasses(run([5390, 20]), corners), [], 'no track length: a jump back is never a lap');
+  });
+  test('flashbacks, seeks, unknown positions and no corners add nothing', () => {
+    assert.deepEqual(L.cornerPasses(run([950, 250, 310]), corners, L5400).map(p => p.n), ['1'], 'the flashback is skipped, then T1 is driven');
+    assert.deepEqual(L.cornerPasses(run([5100, 200]), corners, L5400), [], 'a flashback near the line is not a lap either');
+    assert.deepEqual(L.cornerPasses(run([100, 2000]), corners, L5400), [], 'a seek forward');
+    assert.deepEqual(L.cornerPasses(run([250, null, 350]), corners, L5400), []);
+    assert.deepEqual(L.cornerPasses(run([250, 350]), []), []);
+    assert.deepEqual(L.cornerPasses(run([250, 350]), undefined), []);
+  });
+  test('the corner near a lap distance', () => {
+    assert.equal(L.cornerAt(corners, 880).n, '2');
+    assert.equal(L.cornerAt(corners, 600), null);
+    assert.equal(L.cornerAt(corners, 600, 300).n, '1', 'nearest within the range');
+    assert.equal(L.cornerAt(undefined, 600), null);
   });
 });
 

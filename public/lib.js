@@ -125,6 +125,31 @@
       apply: p => [c * (p[0] - ma[0]) - s * (p[1] - ma[1]) + mb[0], s * (p[0] - ma[0]) + c * (p[1] - ma[1]) + mb[1]],
     };
   }
+  // When time samples ({t, ld}) went through each corner ({n, d}): [{t, n}]. Samples are tens of milliseconds apart,
+  // so a car covers a few metres between them: going further than CORNER_JUMP_M, forwards or over the start line,
+  // is a replay seek, and any other step back a flashback or seek; neither is driving through a corner.
+  const CORNER_JUMP_M = 300;
+  function cornerPasses(samples, corners, trackLength) {
+    const out = [];
+    if (!corners || !corners.length) return out;
+    for (let i = 1; i < samples.length; i++) {
+      const a = samples[i - 1].ld, b = samples[i].ld;
+      if (a == null || b == null) continue;
+      const wrapped = trackLength > 0 && b < a && trackLength - a + b <= CORNER_JUMP_M; // over the line
+      if (!wrapped && (b < a || b - a > CORNER_JUMP_M)) continue;
+      for (const c of corners) {
+        if (wrapped ? c.d > a || c.d <= b : c.d > a && c.d <= b) out.push({t: samples[i].t, n: c.n});
+      }
+    }
+    return out;
+  }
+  // the corner within `within` metres of a lap distance, or null
+  function cornerAt(corners, d, within = 60) {
+    let best = null;
+    for (const c of corners || []) if (Math.abs(c.d - d) <= within && (!best || Math.abs(c.d - d) < Math.abs(best.d - d))) best = c;
+    return best;
+  }
+
   const FIT_N = 256, FIT_MAX_ERR = 0.03;
   // Official corners ({outline: [[x, y]], corners: [{n, x, y}]}, any coordinate system) placed on the game outline
   // (points: [[bucket, x, z]] around the lap): [{n, d}] with d in metres of lap distance, sorted by d. The official
@@ -168,11 +193,13 @@
   // --- Compare chart: lap-synced traces, samples keyed by lap distance ---
   const ERS_MAX = 4000000;
   const round3 = v => Math.round(v * 1000) / 1000; // charts don't need more, and history snapshots stay small
-  // one chart sample: pedals, gear and the battery (charge 0..1 and deploy mode). Without a status packet yet
-  // (it can arrive after the first telemetry) the battery is unknown (null), not an empty battery.
-  const traceSample = (t, st) => ({
+  // one chart sample: pedals, gear, the battery (charge 0..1 and deploy mode) and where on the lap it was (ld, metres;
+  // marks the corners on time charts). Without a status packet yet (it can arrive after the first telemetry) the
+  // battery is unknown (null), not an empty battery; without lap data, so is the position.
+  const traceSample = (t, st, lap) => ({
     speed: t.m_speed, thr: round3(t.m_throttle), brk: round3(t.m_brake), gear: t.m_gear,
     ers: st ? round3(Math.max(0, Math.min(1, st.m_ersStoreEnergy / ERS_MAX))) : null, mode: st ? st.m_ersDeployMode : null,
+    ld: lap && lap.m_lapDistance >= 0 ? Math.round(lap.m_lapDistance) : null,
   });
   // a lap trace good enough to be a best-lap reference: starts at the line and has no holes
   // (joining mid-lap, or a replay seek, leaves part of the lap unrecorded)
@@ -202,7 +229,7 @@
       lt.cur = lt.cur.filter(p => p.d <= dist);
       prev = lt.cur[lt.cur.length - 1];
     }
-    if (!prev || dist - prev.d >= 2) lt.cur.push({d: Math.round(dist * 10) / 10, ...traceSample(t, st)});
+    if (!prev || dist - prev.d >= 2) lt.cur.push({d: Math.round(dist * 10) / 10, ...traceSample(t, st, lap)});
     return lt;
   }
 
@@ -235,15 +262,15 @@
     let trail = h.trails.get(idx);
     if (!trail) h.trails.set(idx, (trail = []));
     const last = trail[trail.length - 1];
-    if (!last || now - last.t >= TRAIL_STEP_MS) trail.push({t: now, ...traceSample(t, st)});
+    if (!last || now - last.t >= TRAIL_STEP_MS) trail.push({t: now, ...traceSample(t, st, lap)});
     while (trail.length && now - trail[0].t > TRAIL_MS) trail.shift();
     if (lap) recordLapTrace(h.laps, idx, t, lap, st);
   }
   // Wire form for one car (null when nothing is recorded). Samples are packed as flat number arrays,
-  // [x, speed, thr, brk, gear, ers, mode, x, ...], about half the size of objects with repeated keys.
+  // [x, speed, thr, brk, gear, ers, mode, ld, x, ...], about half the size of objects with repeated keys.
   // Trail times become ages (x = a), so client and server clocks needn't agree; lap traces keep x = d.
   // A best lap that is also the last lap is sent once ('last').
-  const SAMPLE_KEYS = ['speed', 'thr', 'brk', 'gear', 'ers', 'mode'];
+  const SAMPLE_KEYS = ['speed', 'thr', 'brk', 'gear', 'ers', 'mode', 'ld'];
   const STRIDE = SAMPLE_KEYS.length + 1;
   function packPoints(pts, x, xOf = p => p[x]) {
     const out = [];
@@ -410,7 +437,7 @@
     WEATHER, ERS_MODES, COMPOUNDS, TYRES, CAR_PARTS, DMG_KEYS, DMG_COLORS, TRACK_BUCKET_M,
     tempColor, wearColor, dmgLevel, cap, fmtTime, fmtSector, fmtGap, esc, fmtClock, gapOk, leaderGap,
     MAX_COLS, normalizeArrangement, moveSection,
-    outlineComplete, outlinePoints, fitCorners,
+    outlineComplete, outlinePoints, fitCorners, cornerPasses, cornerAt,
     learnTrack, recordLapTrace, createHistory, recordHistory, historySnapshot, historyTrail, historyLaps, packPoints, traceSample, nearest, metricValue, fmtMetric, fmtDelta,
     tyreProjection, fmtLaps, lapsColor, fmtS, fmtRate, nameOf, rejoinEstimate, battleTrend,
   };

@@ -728,6 +728,62 @@ describe('track map', () => {
     assert.equal(calls.length, 1, 'same track, new session: loaded again');
     p.close();
   });
+  test('the compare distance chart marks the corners; the hover names the one under the cursor', async () => {
+    const p = await boot();
+    mapServer(p, {data: {points: RING, corners: [...CORNERS, {n: '15', d: 2580}]}});
+    const s = withMap(dashboardState());
+    p.push(s);
+    await p.tick(5);
+    p.$('compareBtn').click();
+    const cv = p.$('cmpCanvas');
+    Object.defineProperty(cv, 'clientWidth', {value: 852}); // 800 px of plot for 3323 m
+    Object.defineProperty(cv, 'clientHeight', {value: 200});
+    p.$('cmpAxis').querySelector('[data-a=dist]').click();
+    p.drawLog.length = 0;
+    p.eval('drawCompareChart()');
+    const labels = p.drawLog.filter(c => c[0] === 'fillText').map(c => c[1]);
+    assert.deepEqual(labels.filter(l => /^T/.test(l)), ['T1', 'T2', 'T13'], 'T14 and T15 are too close to T13 for their own labels');
+    p.eval(`lapTraces.set(2, ${JSON.stringify({lap: 9, cur: [], last: [{d: 600, speed: 90, thr: 0, brk: 1, gear: 2, ers: 0.5, mode: 1}], lastLap: 8})})`);
+    p.$('cmpLap').querySelector('[data-l=last]').click();
+    p.eval(`cmpHoverX = ${44 + (610 / 3323) * 800}`);
+    p.drawLog.length = 0;
+    p.eval('drawCompareChart()');
+    assert.ok(p.drawLog.some(c => c[0] === 'fillText' && c[1] === '610 m · T2'));
+    p.close();
+  });
+  test('time charts mark where the car went through each corner', async () => {
+    const p = await boot();
+    mapServer(p);
+    const s = withMap(dashboardState());
+    p.push(s);
+    await p.tick(5);
+    // the pedal traces keep where on the lap each sample was
+    p.push({...s, lap: {...s.lap, m_lapDistance: 1234.4}});
+    assert.equal(p.eval('samples.at(-1).ld'), 1234);
+    p.push({...s, lap: {...s.lap, m_lapDistance: -20}});
+    assert.equal(p.eval('samples.at(-1).ld'), null, 'before the line: unknown');
+    p.eval('openDriver(2)');
+    p.push({...s, detail: {idx: 2, telemetry: s.telemetry, status: s.status, damage: s.damage, lap: {...s.lap, m_lapDistance: 600}}});
+    assert.equal(p.eval('dmSamples.at(-1).ld'), 600);
+    p.eval('closeDriver()');
+    const tr = p.$('trace');
+    Object.defineProperty(tr, 'clientWidth', {value: 300});
+    Object.defineProperty(tr, 'clientHeight', {value: 80});
+    p.eval('samples.length = 0; const now = performance.now(); [190, 205, 215, 225, 240].forEach((ld, i) => samples.push({t: now - 4000 + i * 100, thr: 1, brk: 0, ld}))');
+    p.drawLog.length = 0;
+    p.eval("drawPedalTrace($('trace'), samples)");
+    assert.deepEqual(p.drawLog.filter(c => c[0] === 'fillText').map(c => c[1]), ['T1']);
+    // compare's live time chart: the reference driver's passes
+    p.$('compareBtn').click();
+    const cv = p.$('cmpCanvas');
+    Object.defineProperty(cv, 'clientWidth', {value: 600});
+    Object.defineProperty(cv, 'clientHeight', {value: 200});
+    p.eval('cmpTrails.set(cmpCols[0].idx, (() => { const now = performance.now(); return [600, 610, 620, 2530, 2545, 2575].map((ld, i) => ({t: now - 9000 + i * 1000, speed: 100, thr: 1, brk: 0, gear: 4, ers: 0.5, mode: 1, ld})); })())');
+    p.drawLog.length = 0;
+    p.eval('drawCompareChart()');
+    assert.deepEqual(p.drawLog.filter(c => c[0] === 'fillText' && /^T/.test(c[1])).map(c => c[1]), ['T2', 'T13', 'T14']);
+    p.close();
+  });
   test('learns the circuit from every car and draws rivals with labels', async () => {
     const p = await boot();
     const map = p.$('map');

@@ -2,7 +2,7 @@ const $ = id => document.getElementById(id);
 const {
   WEATHER, ERS_MODES, COMPOUNDS, TYRES, CAR_PARTS, DMG_KEYS, DMG_COLORS, TRACK_BUCKET_M,
   tempColor, wearColor, dmgLevel, cap, fmtTime, fmtSector, fmtGap, esc, fmtClock, gapOk, leaderGap,
-  learnTrack, recordLapTrace, historyTrail, historyLaps, traceSample, nearest, metricValue, fmtMetric, fmtDelta,
+  learnTrack, recordLapTrace, historyTrail, historyLaps, traceSample, cornerPasses, cornerAt, nearest, metricValue, fmtMetric, fmtDelta,
   tyreProjection, fmtLaps, lapsColor, fmtS, fmtRate, nameOf, rejoinEstimate, battleTrend,
   ersModeName, zoneRanges, boostBadge, aeroLabel, overtakeReady, sessionLabel, lapTag, fmtSize,
 } = PitLib;
@@ -165,7 +165,7 @@ function renderBattery(bat, st, badge, t2) {
   bat.title = `Battery ${Math.round(pct)}% · ERS mode: ${mode || 'unknown'}` + (bat.classList.contains('ot') && !boosting ? ' · overtake mode available' : '') + (boosting ? ' · overtake mode in use' : badge.wait ? ` · overtake available in ${badge.wait} m` : '');
 }
 
-function renderDriving(t, prefix, trail, t2, status) {
+function renderDriving(t, prefix, trail, t2, status, lap) {
   idFor(prefix, 'speed').textContent = t.m_speed;
   idFor(prefix, 'gear').textContent = t.m_gear === 0 ? 'N' : t.m_gear < 0 ? 'R' : t.m_gear;
   idFor(prefix, 'rpm').textContent = t.m_engineRPM;
@@ -174,7 +174,7 @@ function renderDriving(t, prefix, trail, t2, status) {
   idFor(prefix, 'brk').style.height = t.m_brake * 100 + '%';
   idFor(prefix, 'steer').style.left = 50 + t.m_steer * 45 + '%';
   const now = performance.now();
-  trail.push({t: now, thr: t.m_throttle, brk: t.m_brake});
+  trail.push({t: now, thr: t.m_throttle, brk: t.m_brake, ld: lap && lap.m_lapDistance >= 0 ? Math.round(lap.m_lapDistance) : null});
   while (trail.length && now - trail[0].t > TRACE_SECONDS * 1000) trail.shift();
 }
 
@@ -209,6 +209,7 @@ function drawPedalTrace(cv, trail) {
   ctx.strokeStyle = '#161923'; ctx.lineWidth = 1;
   for (let i = 1; i < 4; i++) { ctx.beginPath(); ctx.moveTo(0, Math.round((h * i) / 4) + .5); ctx.lineTo(w, Math.round((h * i) / 4) + .5); ctx.stroke(); }
   const now = performance.now(), span = TRACE_SECONDS * 1000;
+  drawCornerPasses(ctx, trail, x => x, now, span, w, h, 0);
   const series = (key, rgb) => {
     const pts = trail.map(s => [w - ((now - s.t) / span) * w, h - 3 - s[key] * (h - 6)]);
     if (pts.length < 2) return;
@@ -226,6 +227,23 @@ function drawPedalTrace(cv, trail) {
   series('brk', '255, 45, 31');
 }
 const samples = [];
+
+// Corner numbers on a time chart: a faint line and the number where the trace went through each corner.
+// xOf maps a canvas x within [0, plotW] to the chart (for a left margin); top: where the numbers go.
+function drawCornerPasses(ctx, trail, xOf, now, span, plotW, h, top) {
+  const passes = cornerPasses(trail, trackCorners, latest && latest.session && latest.session.trackLength);
+  if (!passes.length) return;
+  ctx.save();
+  ctx.font = `700 9px ${DISPLAY_FONT}`; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+  for (const p of passes) {
+    const x = Math.round(xOf(plotW - ((now - p.t) / span) * plotW)) + .5;
+    if (x < xOf(0) || x > xOf(plotW)) continue;
+    ctx.strokeStyle = 'rgba(236, 238, 243, .08)';
+    ctx.beginPath(); ctx.moveTo(x, top + 11); ctx.lineTo(x, h); ctx.stroke();
+    ctx.fillStyle = '#7a8195'; ctx.fillText('T' + p.n, x, top + 1);
+  }
+  ctx.restore();
+}
 
 // --- Track map ---
 const map = $('map'), mctx = map.getContext('2d');
@@ -515,7 +533,7 @@ function renderDriver(s) {
 
   // the server recorded this car before the window opened: start from that, replacing anything shown so far
   if (d.history) dmSamples.splice(0, dmSamples.length, ...historyTrail(d.history, performance.now()));
-  renderDriving(t, 'dm', dmSamples, d.telemetry2, d.status);
+  renderDriving(t, 'dm', dmSamples, d.telemetry2, d.status, d.lap);
   if (d.status) renderStatus(d.status, 'dm', s.session && s.session.packetFormat);
   dmCar.update(t, d.damage);
   if (d.damage) dmDamage.update(d.damage);
@@ -742,7 +760,7 @@ function renderCompare(s) {
     if (!d.telemetry) continue;
     const trail = cmpTrails.get(d.idx) || [];
     const t = d.telemetry;
-    trail.push({t: now, ...traceSample(t, d.status)});
+    trail.push({t: now, ...traceSample(t, d.status, d.lap)});
     while (trail.length && now - trail[0].t > CMP_KEEP_SECONDS * 1000) trail.shift();
     cmpTrails.set(d.idx, trail);
     if (d.lap) recordLapTrace(lapTraces, d.idx, t, d.lap, d.status);
@@ -874,6 +892,24 @@ function drawCompareChart() {
     for (let sec = 0; sec <= cmpWindow; sec += step) ctx.fillText(sec ? (sec < 60 ? `-${sec}s` : `-${fmtClock(sec)}`) : 'now', xOf(now - sec * 1000), h - 4);
   }
 
+  // corners: at their lap distance, or where the reference (first) driver went through them
+  if (byDist && trackCorners.length) {
+    ctx.save();
+    ctx.font = `700 9px ${DISPLAY_FONT}`; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+    let lastLabel = -Infinity;
+    for (const c of trackCorners) {
+      const x = Math.round(xOf(c.d)) + .5;
+      if (x < padL || x > padL + plotW) continue;
+      ctx.strokeStyle = 'rgba(236, 238, 243, .07)';
+      ctx.beginPath(); ctx.moveTo(x, padT + 11); ctx.lineTo(x, padT + plotH); ctx.stroke();
+      if (x - lastLabel < 16) continue; // corners this close share one label
+      ctx.fillStyle = '#7a8195'; ctx.fillText('T' + c.n, x, padT);
+      lastLabel = x;
+    }
+    ctx.restore();
+  } else if (!byDist && series[0]) {
+    drawCornerPasses(ctx, series[0], x => padL + x, now, cmpWindow * 1000, plotW, padT + plotH, padT);
+  }
 
   // traces
   series.forEach((pts, k) => {
@@ -927,7 +963,8 @@ function drawCompareChart() {
     ctx.fillStyle = SLOT_COLORS[r.k]; ctx.fill(); ctx.lineWidth = 1.5; ctx.strokeStyle = '#07080b'; ctx.stroke();
   }
   // readout box
-  const title = byDist ? `${Math.round(key)} m` : `${((now - key) / 1000).toFixed(1)} s ago`;
+  const corner = byDist && cornerAt(trackCorners, key);
+  const title = byDist ? `${Math.round(key)} m${corner ? ' · T' + corner.n : ''}` : `${((now - key) / 1000).toFixed(1)} s ago`;
   ctx.font = `600 11px ${DISPLAY_FONT}`;
   const lineH = 15, boxW = 190, boxH = 10 + lineH * (rows.length + 1);
   let bx = cmpHoverX + 12;
@@ -1099,7 +1136,7 @@ function render(s) {
 
   const t = s.telemetry;
   if (t) {
-    renderDriving(t, '', samples, s.telemetry2, s.status);
+    renderDriving(t, '', samples, s.telemetry2, s.status, s.lap);
     const lit = Math.round(((t.m_revLightsPercent || 0) / 100) * 15);
     [...rev.children].forEach((el, i) => el.classList.toggle('on', i < lit));
   }
