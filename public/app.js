@@ -230,6 +230,30 @@ const samples = [];
 // --- Track map ---
 const map = $('map'), mctx = map.getContext('2d');
 let track = new Map(), sessionUID = null, car = null;
+// The outline and official corners for this track, from the server (shipped, or learned the first time the track
+// was seen): drawn at once instead of waiting for the cars to drive a lap.
+let trackCorners = [], trackPreloaded = false, trackShown = null, trackRequested = null;
+function syncTrackMap(s) {
+  const tm = s.trackMap;
+  const key = tm ? `${tm.trackId}-${tm.trackLength}` : null;
+  if (key !== trackShown) {
+    trackShown = key;
+    trackPreloaded = false;
+    trackRequested = null;
+    trackCorners = [];
+  }
+  if (!tm || !tm.available || trackPreloaded || trackRequested === key || typeof fetch !== 'function') return;
+  trackRequested = key;
+  fetch(`/api/track?id=${tm.trackId}&len=${tm.trackLength}`)
+    .then(res => (res.ok ? res.json() : null))
+    .then(data => {
+      if (!data || trackShown !== key) return; // gone, or another track by now
+      track = new Map(data.points.map(([k, x, z]) => [k, {x, z}]));
+      trackCorners = data.corners || [];
+      trackPreloaded = true;
+    })
+    .catch(() => { trackRequested = null; }); // try again with the next message
+}
 
 function drawMap() {
   const dpr = devicePixelRatio || 1;
@@ -294,6 +318,8 @@ function drawMap() {
     drawZones(zoneRanges(se.drsZones, se.trackLength), 'rgba(31, 209, 102, .9)');
   }
 
+  if (trackCorners.length && keys.length > 1) drawMapCorners(keys, px, py);
+
   mctx.font = `700 11px ${DISPLAY_FONT}`; mctx.textAlign = 'center';
   for (const r of rivals) {
     const x = px(r), y = py(r);
@@ -312,6 +338,35 @@ function drawMap() {
     mctx.fillStyle = '#fff'; mctx.shadowColor = '#fff'; mctx.shadowBlur = 14; mctx.fill(); mctx.shadowBlur = 0;
     mctx.lineWidth = 2.5; mctx.strokeStyle = '#e10600'; mctx.stroke();
   }
+}
+
+// Official corner numbers just beside the track: of the two sides, the one further from the rest of the outline.
+function drawMapCorners(keys, px, py) {
+  const at = k => {
+    for (let o = 0; o < 12; o++) { const p = track.get(k + o) || track.get(k - o); if (p) return p; }
+    return null;
+  };
+  const outline = keys.filter((k, i) => i % 3 === 0).map(k => [px(track.get(k)), py(track.get(k))]);
+  const clearance = (x, y) => outline.reduce((m, [ox, oy]) => Math.min(m, Math.hypot(ox - x, oy - y)), Infinity);
+  mctx.font = `700 9px ${DISPLAY_FONT}`; mctx.textAlign = 'center'; mctx.textBaseline = 'middle';
+  const placed = [];
+  const free = (x, y) => placed.every(q => Math.hypot(q[0] - x, q[1] - y) >= 16);
+  for (const c of trackCorners) {
+    const k = Math.floor(c.d / TRACK_BUCKET_M), p = at(k), a = at(k - 4), b = at(k + 4);
+    if (!p || !a || !b) continue;
+    const tx = px(b) - px(a), ty = py(b) - py(a), len = Math.hypot(tx, ty) || 1;
+    const nx = -ty / len, ny = tx / len, x0 = px(p), y0 = py(p), gap = 15;
+    const side = clearance(x0 + nx * gap, y0 + ny * gap) >= clearance(x0 - nx * gap, y0 - ny * gap) ? 1 : -1;
+    // corners close together (chicanes): move a label further out, or across, rather than on top of another
+    const spots = [[side, gap], [side, gap * 2], [-side, gap], [-side, gap * 2]].map(([s, g]) => [x0 + nx * g * s, y0 + ny * g * s]);
+    const [x, y] = spots.find(([sx, sy]) => free(sx, sy)) || spots[0];
+    placed.push([x, y]);
+    mctx.beginPath(); mctx.arc(x, y, 7.5, 0, Math.PI * 2);
+    mctx.fillStyle = 'rgba(15, 17, 24, .9)'; mctx.fill();
+    mctx.lineWidth = 1; mctx.strokeStyle = '#454b5e'; mctx.stroke();
+    mctx.fillStyle = '#aeb3c2'; mctx.fillText(c.n, x, y + .5);
+  }
+  mctx.textBaseline = 'alphabetic';
 }
 
 let bestLap = 0, lastSeenLast = 0;
@@ -819,6 +874,7 @@ function drawCompareChart() {
     for (let sec = 0; sec <= cmpWindow; sec += step) ctx.fillText(sec ? (sec < 60 ? `-${sec}s` : `-${fmtClock(sec)}`) : 'now', xOf(now - sec * 1000), h - 4);
   }
 
+
   // traces
   series.forEach((pts, k) => {
     if (pts.length < 2) return;
@@ -1009,10 +1065,12 @@ function render(s) {
   if (s.session && s.session.sessionUID !== sessionUID) {
     sessionUID = s.session.sessionUID;
     track = new Map(); car = null; bestLap = 0; lapTraces.clear(); cmpTrails.clear();
+    trackShown = null; // the map is loaded again for the new session
   }
   renderRecording(s);
   renderRivals(s);
-  learnTrack(track, s.rivals);
+  syncTrackMap(s);
+  if (!trackPreloaded) learnTrack(track, s.rivals); // a loaded outline is complete already
   renderDriver(s);
   renderCompare(s);
   renderStrategy(s);

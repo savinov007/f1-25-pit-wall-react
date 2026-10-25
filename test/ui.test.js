@@ -626,6 +626,108 @@ describe('recording', () => {
 });
 
 describe('track map', () => {
+  // a shipped / learned map for "track 5": a ring of 416 buckets (3323 m) and a few official corners
+  const RING = Array.from({length: 416}, (_, k) => [k, Math.round(Math.cos(k / 66.2) * 400), Math.round(Math.sin(k / 66.2) * 250)]);
+  const CORNERS = [{n: '1', d: 220}, {n: '2', d: 612}, {n: '13', d: 2540}, {n: '14', d: 2572}];
+  const withMap = (s, available = true, trackId = 5) => ({...s, session: {...s.session, trackLength: 3323}, trackMap: {trackId, trackLength: 3323, available}});
+  function mapServer(p, {status = 200, fail = false, data = {points: RING, corners: CORNERS}} = {}) {
+    const calls = [];
+    p.w.fetch = async url => {
+      calls.push(url);
+      if (fail) throw new Error('offline');
+      return {ok: status === 200, status, json: async () => data};
+    };
+    return calls;
+  }
+  const sized = p => {
+    Object.defineProperty(p.$('map'), 'clientWidth', {value: 400});
+    Object.defineProperty(p.$('map'), 'clientHeight', {value: 300});
+  };
+  const mapText = p => {
+    p.drawLog.length = 0;
+    p.eval('drawMap()');
+    return p.drawLog.filter(c => c[0] === 'fillText').map(c => c[1]);
+  };
+
+  test('a known track is drawn at once, with its corner numbers', async () => {
+    const p = await boot();
+    sized(p);
+    const calls = mapServer(p);
+    const s = withMap(dashboardState({rivals: []}));
+    p.push(s);
+    await p.tick(5);
+    assert.deepEqual(calls, ['/api/track?id=5&len=3323']);
+    assert.equal(p.eval('trackPreloaded'), true);
+    assert.equal(p.eval('track.size'), 416, 'the whole outline, before any car has driven');
+    const text = mapText(p);
+    assert.ok(!text.includes('WAITING FOR CARS ON TRACK'));
+    assert.deepEqual(text.filter(t => /^\d+$/.test(t)), ['1', '2', '13', '14']);
+    // close corners (13, 14): their labels don't sit on top of each other
+    const at = n => p.drawLog.findIndex(c => c[0] === 'fillText' && c[1] === n);
+    const pos = n => p.drawLog[at(n)].slice(2, 4);
+    const [a, b] = [pos('13'), pos('14')];
+    assert.ok(Math.hypot(a[0] - b[0], a[1] - b[1]) >= 16);
+    // cars still move on it, but no longer change it
+    const outline = () => JSON.stringify(p.eval('[...track.entries()]'));
+    const before = outline();
+    const driving = withMap(dashboardState());
+    // cars on the track, 5 m off the outline's line: a live map would learn (and shift) from them
+    driving.rivals = driving.rivals.map((r, i) => { const [k, x, z] = RING[20 + i * 10]; return {...r, dist: k * 8 + 1, x: x + 5, z, result: 2, pit: 0}; });
+    p.push(driving);
+    assert.equal(outline(), before);
+    p.push(withMap(dashboardState()));
+    assert.equal(calls.length, 1, 'loaded once');
+    p.close();
+  });
+  test('no map yet: learned live as before, loaded once the server has one', async () => {
+    const p = await boot();
+    const calls = mapServer(p);
+    p.push(withMap(dashboardState(), false));
+    await p.tick(5);
+    assert.equal(calls.length, 0);
+    assert.ok(p.eval('track.size') > 0, 'learning from the cars');
+    assert.equal(p.eval('trackPreloaded'), false);
+    p.push(withMap(dashboardState(), true));
+    await p.tick(5);
+    assert.equal(calls.length, 1);
+    assert.equal(p.eval('track.size'), 416);
+    p.close();
+  });
+  test('a failed request is tried again; a missing map is not asked for again and again', async () => {
+    const p = await boot();
+    let calls = mapServer(p, {fail: true});
+    p.push(withMap(dashboardState()));
+    await p.tick(5);
+    p.push(withMap(dashboardState()));
+    await p.tick(5);
+    assert.equal(calls.length, 2, 'network error: retried with the next message');
+    calls = mapServer(p, {status: 404});
+    p.push(withMap(dashboardState(), true, 9));
+    await p.tick(5);
+    p.push(withMap(dashboardState(), true, 9));
+    await p.tick(5);
+    assert.equal(calls.length, 1);
+    assert.equal(p.eval('trackPreloaded'), false);
+    p.close();
+  });
+  test('another track or a new session loads its own map; a late answer for the old one is dropped', async () => {
+    const p = await boot();
+    let release;
+    p.w.fetch = url => new Promise(resolve => { release = () => resolve({ok: true, status: 200, json: async () => ({points: RING.slice(0, 10), corners: []})}); });
+    p.push(withMap(dashboardState()));
+    p.w.fetch = async () => ({ok: true, status: 200, json: async () => ({points: RING, corners: CORNERS})});
+    p.push(withMap(dashboardState(), true, 6)); // the session moved on to another track
+    await p.tick(5);
+    release(); // the first track's answer arrives late
+    await p.tick(5);
+    assert.equal(p.eval('track.size'), 416);
+    assert.equal(p.eval('trackCorners.length'), 4);
+    const calls = mapServer(p);
+    p.push(withMap(dashboardState({session: {...dashboardState().session, sessionUID: 'next'}}), true, 6));
+    await p.tick(5);
+    assert.equal(calls.length, 1, 'same track, new session: loaded again');
+    p.close();
+  });
   test('learns the circuit from every car and draws rivals with labels', async () => {
     const p = await boot();
     const map = p.$('map');

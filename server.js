@@ -6,7 +6,7 @@ const {WebSocketServer} = require('ws');
 const {F1TelemetryClient, constants} = require('./build/src');
 const {StrategyTracker} = require('./strategy');
 const {loadRecording, createPlayer, createRecordingWriter, readHeader, isRecordingName, REC_EXT, HEADER_BYTES} = require('./replay');
-const {overtakeOn, createHistory, recordHistory, historySnapshot} = require('./public/lib');
+const {overtakeOn, createHistory, recordHistory, historySnapshot, learnTrack, outlineComplete, outlinePoints, fitCorners} = require('./public/lib');
 
 const {PACKETS, TRACKS, TEAMS} = constants;
 const PUBLIC = path.join(__dirname, 'public');
@@ -204,6 +204,10 @@ function createDashboard(options = {}) {
     recDir = path.join(__dirname, 'recordings'),
     recMaxBytes = REC_MAX_BYTES,
     recFlushMs = REC_FLUSH_MS,
+    trackDir = path.join(__dirname, 'tracks-learned'), // outlines learned from the cars, one file per track
+    bundledTrackDir = path.join(PUBLIC, 'tracks'), // outlines shipped with the dashboard
+    officialFile = path.join(__dirname, 'tracks', 'official.json'), // official corner numbers, see scripts/
+    trackComplete = {}, // outlineComplete() limits; tests lower them
     broadcastMs = 33,
     log = console,
   } = options;
@@ -353,6 +357,7 @@ function createDashboard(options = {}) {
     if (!isRecordingName(name) || !fs.existsSync(path.join(recDir, name))) throw new Error('No such recording');
     const dash = createDashboard({
       replayFile: path.join(recDir, name), httpPort: 0, udpPort: 0, recDir, log, broadcastMs,
+      trackDir, bundledTrackDir, officialFile, trackComplete,
       replayIdleMs, onIdle: () => { replays.delete(dash); dash.stop(); },
     });
     replays.add(dash);
@@ -384,6 +389,7 @@ function createDashboard(options = {}) {
 
   const httpServer = http.createServer((req, res) => {
     if (req.url.split('?')[0] === '/api/replays') return api(req, res);
+    if (req.url.split('?')[0] === '/api/track') return trackApi(req, res);
     let name;
     try {
       name = req.url === '/' ? 'index.html' : path.normalize(decodeURIComponent(req.url.split('?')[0]));
@@ -519,6 +525,69 @@ function createDashboard(options = {}) {
     else if (action === 'loop') player.setLoop(!!value);
   }
 
+  // --- Track maps: shipped outlines (bundledTrackDir), else learned from the cars and saved to trackDir the first
+  // time a whole lap is known, so a track the dashboard has seen once shows at once from then on. Corners get their
+  // official numbers by fitting the official circuit data onto the outline. Files: <trackId>-<trackLength>.json ---
+  let official = null;
+  const officialData = () => {
+    if (!official) {
+      try {
+        official = JSON.parse(fs.readFileSync(officialFile, 'utf8'));
+      } catch (err) {
+        official = {}; // no corner numbers, maps still work
+      }
+    }
+    return official;
+  };
+  const outlines = {key: null, track: new Map(), found: new Map(), failed: null}; // found: key -> {file, at}
+  const trackKey = se => (se && Number.isInteger(se.trackId) && se.trackId >= 0 && se.trackLength > 0 ? `${se.trackId}-${se.trackLength}` : null);
+  // the outline file for a track (learned first, then shipped), or null; a miss is looked up again after a second
+  function outlineFile(key) {
+    const hit = outlines.found.get(key);
+    if (hit && (hit.file || Date.now() - hit.at < 1000)) return hit.file;
+    const file = [path.join(trackDir, key + '.json'), path.join(bundledTrackDir, key + '.json')].find(f => fs.existsSync(f)) || null;
+    outlines.found.set(key, {file, at: Date.now()});
+    return file;
+  }
+  function learnOutline() {
+    const se = state.session, key = demo ? null : trackKey(se);
+    state.trackMap = key ? {trackId: se.trackId, trackLength: se.trackLength, available: !!outlineFile(key)} : null;
+    if (!key || state.trackMap.available || outlines.failed === key) return;
+    if (outlines.key !== key) {
+      outlines.key = key;
+      outlines.track = new Map();
+    }
+    learnTrack(outlines.track, state.rivals);
+    if (!outlineComplete(outlines.track, se.trackLength, trackComplete)) return;
+    const points = outlinePoints(outlines.track, se.trackLength);
+    const data = {trackId: se.trackId, name: se.track, trackLength: se.trackLength, points, corners: fitCorners(points, officialData()[se.trackId])};
+    const file = path.join(trackDir, key + '.json');
+    try {
+      fs.mkdirSync(trackDir, {recursive: true});
+      fs.writeFileSync(file + '.tmp', JSON.stringify(data));
+      fs.renameSync(file + '.tmp', file);
+    } catch (err) {
+      outlines.failed = key; // don't try again every frame
+      log.error(`Could not save the ${se.track} track map: ${err.message}`);
+      return;
+    }
+    outlines.found.set(key, {file, at: Date.now()});
+    state.trackMap.available = true;
+    log.log(`Saved the ${se.track} track map (${data.corners.length} corners) to ${path.relative(__dirname, file)}`);
+  }
+  function trackApi(req, res) {
+    const send = (code, body) => res.writeHead(code, {'Content-Type': 'application/json'}).end(JSON.stringify(body));
+    const q = new URL(req.url, 'http://localhost').searchParams;
+    const id = q.get('id') || '', len = q.get('len') || '';
+    if (!/^\d{1,3}$/.test(id) || !/^\d{1,6}$/.test(len)) return send(400, {error: 'Bad track'});
+    const file = outlineFile(`${Number(id)}-${Number(len)}`);
+    if (!file) return send(404, {error: 'No map for this track yet'});
+    fs.readFile(file, 'utf8', (err, text) => {
+      if (err) send(404, {error: 'No map for this track yet'});
+      else res.writeHead(200, {'Content-Type': 'application/json'}).end(text);
+    });
+  }
+
   function refreshState() {
     state.replay = player ? {file: path.basename(replayFile), ...player.status()} : null;
     state.connected = demo || !!player || Date.now() - lastPacketAt < 3000;
@@ -527,6 +596,7 @@ function createDashboard(options = {}) {
       state.rivals = buildRivals();
       state.pitLoss = strategy.pitLoss();
     }
+    learnOutline();
     state.recording = recordingState();
     return state;
   }

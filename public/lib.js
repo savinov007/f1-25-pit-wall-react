@@ -69,6 +69,33 @@
     return track;
   }
 
+  // An outline is complete once nearly every bucket around the lap is known, with no long stretch missing.
+  function outlineComplete(track, trackLength, {coverage = 0.98, maxGap = 4} = {}) {
+    const n = Math.ceil(trackLength / TRACK_BUCKET_M);
+    if (!(n > 0) || track.size < n * coverage) return false;
+    let run = 0;
+    for (let k = 0; k < n * 2; k++) { // twice round, so a gap across the start line counts as one
+      run = track.has(k % n) ? 0 : run + 1;
+      if (run > maxGap) return false;
+    }
+    return true;
+  }
+  // The outline as [[bucket, x, z]] around the lap, without spikes: a point far from both its neighbours is a car
+  // that was somewhere else at that lap distance (on the grid, in the garage) before the guard in learnTrack had
+  // neighbours to compare with.
+  function outlinePoints(track, trackLength) {
+    const n = Math.ceil(trackLength / TRACK_BUCKET_M);
+    let pts = [...track.keys()].sort((a, b) => a - b).map(k => [k, Math.round(track.get(k).x * 10) / 10, Math.round(track.get(k).z * 10) / 10]);
+    const apart = (a, b) => { const dk = Math.abs(a[0] - b[0]); return Math.max(1, Math.min(dk, n - dk)); }; // round the lap
+    const far = (a, b) => Math.hypot(a[1] - b[1], a[2] - b[2]) > TRACK_BUCKET_M * 3 * apart(a, b);
+    for (let changed = true; changed && pts.length > 2;) {
+      const keep = pts.filter((p, i) => !(far(p, pts[(i + pts.length - 1) % pts.length]) && far(p, pts[(i + 1) % pts.length])));
+      changed = keep.length < pts.length;
+      pts = keep;
+    }
+    return pts;
+  }
+
   // --- Corners: official corner numbers placed on the game's own outline ---
   // A closed polyline resampled to n points evenly spaced along it.
   function resample(pts, n) {
@@ -383,7 +410,7 @@
     WEATHER, ERS_MODES, COMPOUNDS, TYRES, CAR_PARTS, DMG_KEYS, DMG_COLORS, TRACK_BUCKET_M,
     tempColor, wearColor, dmgLevel, cap, fmtTime, fmtSector, fmtGap, esc, fmtClock, gapOk, leaderGap,
     MAX_COLS, normalizeArrangement, moveSection,
-    fitCorners,
+    outlineComplete, outlinePoints, fitCorners,
     learnTrack, recordLapTrace, createHistory, recordHistory, historySnapshot, historyTrail, historyLaps, packPoints, traceSample, nearest, metricValue, fmtMetric, fmtDelta,
     tyreProjection, fmtLaps, lapsColor, fmtS, fmtRate, nameOf, rejoinEstimate, battleTrend,
   };

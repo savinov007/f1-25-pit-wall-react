@@ -13,6 +13,7 @@ A live F1 25 telemetry dashboard ("Pit Wall") built on the `f1-udp-parser` TypeS
 | `strategy.js` | Strategy models measured from live data (tyre wear rate, pace trend, gap trend, pit loss) |
 | `replay.js`, `listen.js` | Recording file format (read and write), replay a recording to UDP; console-only listener |
 | `scripts/compress-recordings.js` | Converts old plain `.jsonl` recordings to compressed `.f1rec`, verified packet by packet |
+| `scripts/build-tracks.js`, `scripts/fetch-official-corners.js` | Build the shipped track maps (`public/tracks/`) from recordings; fetch the official corner data (`tracks/official.json`) |
 | `public/lib.js` | Pure dashboard logic (formatting, projections, map/trace helpers), shared by page and tests |
 | `public/app.js`, `layout.js`, `popup.js` | Page rendering, resizable sections, floating rival popup |
 | `test/` | Tests (Node's built-in runner); `test/fixtures/` holds real F1 25 packets |
@@ -42,6 +43,7 @@ Run `npm test` before committing. A husky **pre-push** hook runs it too and bloc
 | `server.js` | `test/server.test.js` | `createDashboard({httpPort: 0, udpPort: 0, recDir: tmp, log: quiet})`; feed packets with `handlePacket()` or real UDP; always `stop()` |
 | `replay.js`, `listen.js` | `test/replay.test.js`, `test/listen.test.js` | Exported functions, plus the command line via `spawn` |
 | `scripts/compress-recordings.js` | `test/replay.test.js` | `compressRecording()` / `main()` on copies of the fixture in the temp dir |
+| `scripts/build-tracks.js`, `scripts/fetch-official-corners.js` | `test/tracks.test.js` | The fixture with lowered `trackComplete` limits; a fake `fetchJson` (no network) |
 | `public/app.js` (page) | `test/ui.test.js` | `loadPage()` from `test/helpers.js`; `push(dashboardState({...}))`; assert on the DOM and on `sent()` messages |
 | `public/layout.js` | `test/layout.test.js` | `loadPage()`; stub `getBoundingClientRect`; drive pointer/keyboard events |
 | `public/popup.js` | `test/popup.test.js` | `loadPage({width, height})`; drive pointer events |

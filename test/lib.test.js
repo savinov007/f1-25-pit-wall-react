@@ -311,6 +311,38 @@ describe('dashboard arrangement', () => {
   });
 });
 
+describe('track outlines', () => {
+  // a ring of buckets 0..n-1 (8 m apart) on a circle
+  const ring = (n, skip = () => false) => {
+    const t = new Map();
+    for (let k = 0; k < n; k++) if (!skip(k)) t.set(k, {x: Math.cos((k / n) * 2 * Math.PI) * 200, z: Math.sin((k / n) * 2 * Math.PI) * 200});
+    return t;
+  };
+  test('complete: nearly every bucket, no long gap (one across the start line counts once)', () => {
+    assert.equal(L.outlineComplete(ring(100), 800), true);
+    assert.equal(L.outlineComplete(ring(100, k => k % 50 === 1), 800), true, '98% is enough');
+    assert.equal(L.outlineComplete(ring(100, k => k % 30 === 1), 800), false, '96% is not');
+    // 300 buckets: a 5-bucket hole is still 98% coverage, so it's the gap that counts
+    assert.equal(L.outlineComplete(ring(300, k => k >= 50 && k < 55), 2400), false, 'a 5-bucket hole');
+    assert.equal(L.outlineComplete(ring(300, k => k >= 50 && k < 54), 2400), true, 'a 4-bucket hole');
+    assert.equal(L.outlineComplete(ring(300, k => k >= 298 || k < 3), 2400), false, '5 missing across the line');
+    assert.equal(L.outlineComplete(ring(300, k => k >= 298 || k < 2), 2400), true, '4 across the line');
+    assert.equal(L.outlineComplete(new Map(), 0), false);
+    assert.equal(L.outlineComplete(ring(10), 800, {coverage: 0.05, maxGap: 100}), true, 'limits are options');
+  });
+  test('points: sorted, rounded, and spikes left by cars elsewhere at that lap distance dropped', () => {
+    const t = ring(100);
+    t.set(0, {x: 650, z: 0}); // on the grid, 450 m off the track at lap distance 0 (its other neighbour is across the line)
+    t.set(40, {x: -3000, z: 10}); // and a spike in the middle
+    t.get(10).x += 0.04321;
+    const pts = L.outlinePoints(t, 800);
+    assert.equal(pts.length, 98);
+    assert.deepEqual(pts.map(p => p[0]).slice(0, 3), [1, 2, 3], 'the spike at the line is gone too (its neighbour is across it)');
+    assert.ok(!pts.some(p => p[0] === 40));
+    assert.equal(pts.find(p => p[0] === 10)[1], Math.round(t.get(10).x * 10) / 10);
+  });
+});
+
 describe('official corners on the game outline', () => {
   // an asymmetric closed shape, as game outline points [bucket, x, z] 8 m apart along it (lap distance = bucket * 8)
   const shape = u => [Math.cos(u) * (300 + 80 * Math.cos(3 * u)) + 60 * Math.sin(2 * u), Math.sin(u) * (180 + 50 * Math.sin(u))];
