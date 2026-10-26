@@ -626,6 +626,164 @@ describe('recording', () => {
 });
 
 describe('track map', () => {
+  // a shipped / learned map for "track 5": a ring of 416 buckets (3323 m) and a few official corners
+  const RING = Array.from({length: 416}, (_, k) => [k, Math.round(Math.cos(k / 66.2) * 400), Math.round(Math.sin(k / 66.2) * 250)]);
+  const CORNERS = [{n: '1', d: 220}, {n: '2', d: 612}, {n: '13', d: 2540}, {n: '14', d: 2572}];
+  const withMap = (s, available = true, trackId = 5) => ({...s, session: {...s.session, trackLength: 3323}, trackMap: {trackId, trackLength: 3323, available}});
+  function mapServer(p, {status = 200, fail = false, data = {points: RING, corners: CORNERS}} = {}) {
+    const calls = [];
+    p.w.fetch = async url => {
+      calls.push(url);
+      if (fail) throw new Error('offline');
+      return {ok: status === 200, status, json: async () => data};
+    };
+    return calls;
+  }
+  const sized = p => {
+    Object.defineProperty(p.$('map'), 'clientWidth', {value: 400});
+    Object.defineProperty(p.$('map'), 'clientHeight', {value: 300});
+  };
+  const mapText = p => {
+    p.drawLog.length = 0;
+    p.eval('drawMap()');
+    return p.drawLog.filter(c => c[0] === 'fillText').map(c => c[1]);
+  };
+
+  test('a known track is drawn at once, with its corner numbers', async () => {
+    const p = await boot();
+    sized(p);
+    const calls = mapServer(p);
+    const s = withMap(dashboardState({rivals: []}));
+    p.push(s);
+    await p.tick(5);
+    assert.deepEqual(calls, ['/api/track?id=5&len=3323']);
+    assert.equal(p.eval('trackPreloaded'), true);
+    assert.equal(p.eval('track.size'), 416, 'the whole outline, before any car has driven');
+    const text = mapText(p);
+    assert.ok(!text.includes('WAITING FOR CARS ON TRACK'));
+    assert.deepEqual(text.filter(t => /^\d+$/.test(t)), ['1', '2', '13', '14']);
+    // close corners (13, 14): their labels don't sit on top of each other
+    const at = n => p.drawLog.findIndex(c => c[0] === 'fillText' && c[1] === n);
+    const pos = n => p.drawLog[at(n)].slice(2, 4);
+    const [a, b] = [pos('13'), pos('14')];
+    assert.ok(Math.hypot(a[0] - b[0], a[1] - b[1]) >= 16);
+    // cars still move on it, but no longer change it
+    const outline = () => JSON.stringify(p.eval('[...track.entries()]'));
+    const before = outline();
+    const driving = withMap(dashboardState());
+    // cars on the track, 5 m off the outline's line: a live map would learn (and shift) from them
+    driving.rivals = driving.rivals.map((r, i) => { const [k, x, z] = RING[20 + i * 10]; return {...r, dist: k * 8 + 1, x: x + 5, z, result: 2, pit: 0}; });
+    p.push(driving);
+    assert.equal(outline(), before);
+    p.push(withMap(dashboardState()));
+    assert.equal(calls.length, 1, 'loaded once');
+    p.close();
+  });
+  test('no map yet: learned live as before, loaded once the server has one', async () => {
+    const p = await boot();
+    const calls = mapServer(p);
+    p.push(withMap(dashboardState(), false));
+    await p.tick(5);
+    assert.equal(calls.length, 0);
+    assert.ok(p.eval('track.size') > 0, 'learning from the cars');
+    assert.equal(p.eval('trackPreloaded'), false);
+    p.push(withMap(dashboardState(), true));
+    await p.tick(5);
+    assert.equal(calls.length, 1);
+    assert.equal(p.eval('track.size'), 416);
+    p.close();
+  });
+  test('a failed request is tried again; a missing map is not asked for again and again', async () => {
+    const p = await boot();
+    let calls = mapServer(p, {fail: true});
+    p.push(withMap(dashboardState()));
+    await p.tick(5);
+    p.push(withMap(dashboardState()));
+    await p.tick(5);
+    assert.equal(calls.length, 2, 'network error: retried with the next message');
+    calls = mapServer(p, {status: 404});
+    p.push(withMap(dashboardState(), true, 9));
+    await p.tick(5);
+    p.push(withMap(dashboardState(), true, 9));
+    await p.tick(5);
+    assert.equal(calls.length, 1);
+    assert.equal(p.eval('trackPreloaded'), false);
+    p.close();
+  });
+  test('another track or a new session loads its own map; a late answer for the old one is dropped', async () => {
+    const p = await boot();
+    let release;
+    p.w.fetch = url => new Promise(resolve => { release = () => resolve({ok: true, status: 200, json: async () => ({points: RING.slice(0, 10), corners: []})}); });
+    p.push(withMap(dashboardState()));
+    p.w.fetch = async () => ({ok: true, status: 200, json: async () => ({points: RING, corners: CORNERS})});
+    p.push(withMap(dashboardState(), true, 6)); // the session moved on to another track
+    await p.tick(5);
+    release(); // the first track's answer arrives late
+    await p.tick(5);
+    assert.equal(p.eval('track.size'), 416);
+    assert.equal(p.eval('trackCorners.length'), 4);
+    const calls = mapServer(p);
+    p.push(withMap(dashboardState({session: {...dashboardState().session, sessionUID: 'next'}}), true, 6));
+    await p.tick(5);
+    assert.equal(calls.length, 1, 'same track, new session: loaded again');
+    p.close();
+  });
+  test('the compare distance chart marks the corners; the hover names the one under the cursor', async () => {
+    const p = await boot();
+    mapServer(p, {data: {points: RING, corners: [...CORNERS, {n: '15', d: 2580}]}});
+    const s = withMap(dashboardState());
+    p.push(s);
+    await p.tick(5);
+    p.$('compareBtn').click();
+    const cv = p.$('cmpCanvas');
+    Object.defineProperty(cv, 'clientWidth', {value: 852}); // 800 px of plot for 3323 m
+    Object.defineProperty(cv, 'clientHeight', {value: 200});
+    p.$('cmpAxis').querySelector('[data-a=dist]').click();
+    p.drawLog.length = 0;
+    p.eval('drawCompareChart()');
+    const labels = p.drawLog.filter(c => c[0] === 'fillText').map(c => c[1]);
+    assert.deepEqual(labels.filter(l => /^T/.test(l)), ['T1', 'T2', 'T13'], 'T14 and T15 are too close to T13 for their own labels');
+    p.eval(`lapTraces.set(2, ${JSON.stringify({lap: 9, cur: [], last: [{d: 600, speed: 90, thr: 0, brk: 1, gear: 2, ers: 0.5, mode: 1}], lastLap: 8})})`);
+    p.$('cmpLap').querySelector('[data-l=last]').click();
+    p.eval(`cmpHoverX = ${44 + (610 / 3323) * 800}`);
+    p.drawLog.length = 0;
+    p.eval('drawCompareChart()');
+    assert.ok(p.drawLog.some(c => c[0] === 'fillText' && c[1] === '610 m · T2'));
+    p.close();
+  });
+  test('time charts mark where the car went through each corner', async () => {
+    const p = await boot();
+    mapServer(p);
+    const s = withMap(dashboardState());
+    p.push(s);
+    await p.tick(5);
+    // the pedal traces keep where on the lap each sample was
+    p.push({...s, lap: {...s.lap, m_lapDistance: 1234.4}});
+    assert.equal(p.eval('samples.at(-1).ld'), 1234);
+    p.push({...s, lap: {...s.lap, m_lapDistance: -20}});
+    assert.equal(p.eval('samples.at(-1).ld'), null, 'before the line: unknown');
+    p.eval('openDriver(2)');
+    p.push({...s, detail: {idx: 2, telemetry: s.telemetry, status: s.status, damage: s.damage, lap: {...s.lap, m_lapDistance: 600}}});
+    assert.equal(p.eval('dmSamples.at(-1).ld'), 600);
+    p.eval('closeDriver()');
+    const tr = p.$('trace');
+    Object.defineProperty(tr, 'clientWidth', {value: 300});
+    Object.defineProperty(tr, 'clientHeight', {value: 80});
+    p.eval('samples.length = 0; const now = performance.now(); [190, 205, 215, 225, 240].forEach((ld, i) => samples.push({t: now - 4000 + i * 100, thr: 1, brk: 0, ld}))');
+    p.drawLog.length = 0;
+    p.eval("drawPedalTrace($('trace'), samples)");
+    assert.deepEqual(p.drawLog.filter(c => c[0] === 'fillText').map(c => c[1]), ['T1']);
+    // compare's live time chart: the reference driver's passes
+    p.$('compareBtn').click();
+    const cv = p.$('cmpCanvas');
+    Object.defineProperty(cv, 'clientWidth', {value: 600});
+    Object.defineProperty(cv, 'clientHeight', {value: 200});
+    p.eval('cmpTrails.set(cmpCols[0].idx, (() => { const now = performance.now(); return [600, 610, 620, 2530, 2545, 2575].map((ld, i) => ({t: now - 9000 + i * 1000, speed: 100, thr: 1, brk: 0, gear: 4, ers: 0.5, mode: 1, ld})); })())');
+    p.drawLog.length = 0;
+    p.eval('drawCompareChart()');
+    assert.deepEqual(p.drawLog.filter(c => c[0] === 'fillText' && /^T/.test(c[1])).map(c => c[1]), ['T2', 'T13', 'T14']);
+    p.close();
+  });
   test('learns the circuit from every car and draws rivals with labels', async () => {
     const p = await boot();
     const map = p.$('map');

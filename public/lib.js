@@ -69,14 +69,137 @@
     return track;
   }
 
+  // An outline is complete once nearly every bucket around the lap is known, with no long stretch missing.
+  function outlineComplete(track, trackLength, {coverage = 0.98, maxGap = 4} = {}) {
+    const n = Math.ceil(trackLength / TRACK_BUCKET_M);
+    if (!(n > 0) || track.size < n * coverage) return false;
+    let run = 0;
+    for (let k = 0; k < n * 2; k++) { // twice round, so a gap across the start line counts as one
+      run = track.has(k % n) ? 0 : run + 1;
+      if (run > maxGap) return false;
+    }
+    return true;
+  }
+  // The outline as [[bucket, x, z]] around the lap, without spikes: a point far from both its neighbours is a car
+  // that was somewhere else at that lap distance (on the grid, in the garage) before the guard in learnTrack had
+  // neighbours to compare with.
+  function outlinePoints(track, trackLength) {
+    const n = Math.ceil(trackLength / TRACK_BUCKET_M);
+    let pts = [...track.keys()].sort((a, b) => a - b).map(k => [k, Math.round(track.get(k).x * 10) / 10, Math.round(track.get(k).z * 10) / 10]);
+    const apart = (a, b) => { const dk = Math.abs(a[0] - b[0]); return Math.max(1, Math.min(dk, n - dk)); }; // round the lap
+    const far = (a, b) => Math.hypot(a[1] - b[1], a[2] - b[2]) > TRACK_BUCKET_M * 3 * apart(a, b);
+    for (let changed = true; changed && pts.length > 2;) {
+      const keep = pts.filter((p, i) => !(far(p, pts[(i + pts.length - 1) % pts.length]) && far(p, pts[(i + 1) % pts.length])));
+      changed = keep.length < pts.length;
+      pts = keep;
+    }
+    return pts;
+  }
+
+  // --- Corners: official corner numbers placed on the game's own outline ---
+  // A closed polyline resampled to n points evenly spaced along it.
+  function resample(pts, n) {
+    const seg = pts.map((p, i) => { const q = pts[(i + 1) % pts.length]; return Math.hypot(q[0] - p[0], q[1] - p[1]); });
+    const total = seg.reduce((a, b) => a + b, 0);
+    const out = [];
+    for (let k = 0, i = 0, acc = 0; k < n; k++) {
+      const at = (k / n) * total;
+      while (i < seg.length - 1 && acc + seg[i] < at) acc += seg[i++];
+      const f = seg[i] ? (at - acc) / seg[i] : 0, p = pts[i], q = pts[(i + 1) % pts.length];
+      out.push([p[0] + (q[0] - p[0]) * f, p[1] + (q[1] - p[1]) * f]);
+    }
+    return out;
+  }
+  // Best rotation + scale + shift taking points a onto b (2D Procrustes): {err, apply(p)}, err as an RMS distance.
+  function similarity(a, b) {
+    const n = a.length, ma = [0, 0], mb = [0, 0];
+    for (let i = 0; i < n; i++) { ma[0] += a[i][0] / n; ma[1] += a[i][1] / n; mb[0] += b[i][0] / n; mb[1] += b[i][1] / n; }
+    let dot = 0, cross = 0, na = 0, nb = 0;
+    for (let i = 0; i < n; i++) {
+      const ax = a[i][0] - ma[0], ay = a[i][1] - ma[1], bx = b[i][0] - mb[0], by = b[i][1] - mb[1];
+      dot += ax * bx + ay * by; cross += ax * by - ay * bx; na += ax * ax + ay * ay; nb += bx * bx + by * by;
+    }
+    const c = dot / na, s = cross / na; // scale * cos, scale * sin
+    return {
+      err: Math.sqrt(Math.max(0, nb - (dot * dot + cross * cross) / na) / n),
+      apply: p => [c * (p[0] - ma[0]) - s * (p[1] - ma[1]) + mb[0], s * (p[0] - ma[0]) + c * (p[1] - ma[1]) + mb[1]],
+    };
+  }
+  // When time samples ({t, ld}) went through each corner ({n, d}): [{t, n}]. Samples are tens of milliseconds apart,
+  // so a car covers a few metres between them: going further than CORNER_JUMP_M, forwards or over the start line,
+  // is a replay seek, and any other step back a flashback or seek; neither is driving through a corner.
+  const CORNER_JUMP_M = 300;
+  function cornerPasses(samples, corners, trackLength) {
+    const out = [];
+    if (!corners || !corners.length) return out;
+    for (let i = 1; i < samples.length; i++) {
+      const a = samples[i - 1].ld, b = samples[i].ld;
+      if (a == null || b == null) continue;
+      const wrapped = trackLength > 0 && b < a && trackLength - a + b <= CORNER_JUMP_M; // over the line
+      if (!wrapped && (b < a || b - a > CORNER_JUMP_M)) continue;
+      for (const c of corners) {
+        if (wrapped ? c.d > a || c.d <= b : c.d > a && c.d <= b) out.push({t: samples[i].t, n: c.n});
+      }
+    }
+    return out;
+  }
+  // the corner within `within` metres of a lap distance, or null
+  function cornerAt(corners, d, within = 60) {
+    let best = null;
+    for (const c of corners || []) if (Math.abs(c.d - d) <= within && (!best || Math.abs(c.d - d) < Math.abs(best.d - d))) best = c;
+    return best;
+  }
+
+  const FIT_N = 256, FIT_MAX_ERR = 0.03;
+  // Official corners ({outline: [[x, y]], corners: [{n, x, y}]}, any coordinate system) placed on the game outline
+  // (points: [[bucket, x, z]] around the lap): [{n, d}] with d in metres of lap distance, sorted by d. The official
+  // outline is fitted onto the game's trying both directions, a mirror image (the axes may be flipped) and every
+  // start point, so the game's lap distance stays the authority. A poor fit, or corners that come out of
+  // order along the lap, gives [] rather than wrong numbers.
+  function fitCorners(points, official) {
+    if (!official || !points || points.length < 16 || !official.outline || official.outline.length < 16) return [];
+    const game = resample(points.map(p => [p[1], p[2]]), FIT_N);
+    let best = null;
+    for (const mirror of [1, -1]) {
+      for (const reverse of [false, true]) {
+        const src = official.outline.map(([x, y]) => [x, y * mirror]);
+        if (reverse) src.reverse();
+        const ref = resample(src, FIT_N);
+        for (let off = 0; off < FIT_N; off++) {
+          const shifted = ref.slice(off).concat(ref.slice(0, off));
+          const fit = similarity(shifted, game);
+          if (!best || fit.err < best.err) best = {...fit, mirror};
+        }
+      }
+    }
+    const cx = game.reduce((a, p) => a + p[0], 0) / FIT_N, cz = game.reduce((a, p) => a + p[1], 0) / FIT_N;
+    const size = Math.sqrt(game.reduce((a, p) => a + (p[0] - cx) ** 2 + (p[1] - cz) ** 2, 0) / FIT_N);
+    if (!(best.err <= size * FIT_MAX_ERR)) return [];
+    const placed = official.corners.map(c => {
+      const [x, z] = best.apply([c.x, c.y * best.mirror]);
+      let k = points[0][0], dist = Infinity;
+      for (const p of points) {
+        const dd = (p[1] - x) ** 2 + (p[2] - z) ** 2;
+        if (dd < dist) { dist = dd; k = p[0]; }
+      }
+      return {n: c.n, d: k * TRACK_BUCKET_M + TRACK_BUCKET_M / 2};
+    });
+    // in official order the corners go round the lap once: at most one step back (across the start line)
+    const backs = placed.filter((c, i) => i && c.d < placed[i - 1].d).length;
+    if (backs > 1) return [];
+    return placed.sort((a, b) => a.d - b.d);
+  }
+
   // --- Compare chart: lap-synced traces, samples keyed by lap distance ---
   const ERS_MAX = 4000000;
   const round3 = v => Math.round(v * 1000) / 1000; // charts don't need more, and history snapshots stay small
-  // one chart sample: pedals, gear and the battery (charge 0..1 and deploy mode). Without a status packet yet
-  // (it can arrive after the first telemetry) the battery is unknown (null), not an empty battery.
-  const traceSample = (t, st) => ({
+  // one chart sample: pedals, gear, the battery (charge 0..1 and deploy mode) and where on the lap it was (ld, metres;
+  // marks the corners on time charts). Without a status packet yet (it can arrive after the first telemetry) the
+  // battery is unknown (null), not an empty battery; without lap data, so is the position.
+  const traceSample = (t, st, lap) => ({
     speed: t.m_speed, thr: round3(t.m_throttle), brk: round3(t.m_brake), gear: t.m_gear,
     ers: st ? round3(Math.max(0, Math.min(1, st.m_ersStoreEnergy / ERS_MAX))) : null, mode: st ? st.m_ersDeployMode : null,
+    ld: lap && lap.m_lapDistance >= 0 ? Math.round(lap.m_lapDistance) : null,
   });
   // a lap trace good enough to be a best-lap reference: starts at the line and has no holes
   // (joining mid-lap, or a replay seek, leaves part of the lap unrecorded)
@@ -106,7 +229,7 @@
       lt.cur = lt.cur.filter(p => p.d <= dist);
       prev = lt.cur[lt.cur.length - 1];
     }
-    if (!prev || dist - prev.d >= 2) lt.cur.push({d: Math.round(dist * 10) / 10, ...traceSample(t, st)});
+    if (!prev || dist - prev.d >= 2) lt.cur.push({d: Math.round(dist * 10) / 10, ...traceSample(t, st, lap)});
     return lt;
   }
 
@@ -139,15 +262,15 @@
     let trail = h.trails.get(idx);
     if (!trail) h.trails.set(idx, (trail = []));
     const last = trail[trail.length - 1];
-    if (!last || now - last.t >= TRAIL_STEP_MS) trail.push({t: now, ...traceSample(t, st)});
+    if (!last || now - last.t >= TRAIL_STEP_MS) trail.push({t: now, ...traceSample(t, st, lap)});
     while (trail.length && now - trail[0].t > TRAIL_MS) trail.shift();
     if (lap) recordLapTrace(h.laps, idx, t, lap, st);
   }
   // Wire form for one car (null when nothing is recorded). Samples are packed as flat number arrays,
-  // [x, speed, thr, brk, gear, ers, mode, x, ...], about half the size of objects with repeated keys.
+  // [x, speed, thr, brk, gear, ers, mode, ld, x, ...], about half the size of objects with repeated keys.
   // Trail times become ages (x = a), so client and server clocks needn't agree; lap traces keep x = d.
   // A best lap that is also the last lap is sent once ('last').
-  const SAMPLE_KEYS = ['speed', 'thr', 'brk', 'gear', 'ers', 'mode'];
+  const SAMPLE_KEYS = ['speed', 'thr', 'brk', 'gear', 'ers', 'mode', 'ld'];
   const STRIDE = SAMPLE_KEYS.length + 1;
   function packPoints(pts, x, xOf = p => p[x]) {
     const out = [];
@@ -314,6 +437,7 @@
     WEATHER, ERS_MODES, COMPOUNDS, TYRES, CAR_PARTS, DMG_KEYS, DMG_COLORS, TRACK_BUCKET_M,
     tempColor, wearColor, dmgLevel, cap, fmtTime, fmtSector, fmtGap, esc, fmtClock, gapOk, leaderGap,
     MAX_COLS, normalizeArrangement, moveSection,
+    outlineComplete, outlinePoints, fitCorners, cornerPasses, cornerAt,
     learnTrack, recordLapTrace, createHistory, recordHistory, historySnapshot, historyTrail, historyLaps, packPoints, traceSample, nearest, metricValue, fmtMetric, fmtDelta,
     tyreProjection, fmtLaps, lapsColor, fmtS, fmtRate, nameOf, rejoinEstimate, battleTrend,
   };

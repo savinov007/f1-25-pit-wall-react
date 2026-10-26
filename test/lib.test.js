@@ -159,7 +159,9 @@ describe('battery and best-lap traces', () => {
   });
   test('samples are rounded so history snapshots stay small', () => {
     const s = L.traceSample({m_speed: 200, m_throttle: 0.123456, m_brake: 0.98765, m_gear: 6}, st(1234567, 1));
-    assert.deepEqual(s, {speed: 200, thr: 0.123, brk: 0.988, gear: 6, ers: 0.309, mode: 1});
+    assert.deepEqual(s, {speed: 200, thr: 0.123, brk: 0.988, gear: 6, ers: 0.309, mode: 1, ld: null}, 'no lap data: position unknown');
+    assert.equal(L.traceSample({m_speed: 1}, null, {m_lapDistance: 1234.6}).ld, 1235, 'whole metres');
+    assert.equal(L.traceSample({m_speed: 1}, null, {m_lapDistance: -40}).ld, null, 'before the line on lap 1');
     const traces = new Map();
     L.recordLapTrace(traces, 0, tel(1), lap(1, 12.3456));
     assert.equal(traces.get(0).cur[0].d, 12.3);
@@ -245,10 +247,10 @@ describe('per-car history', () => {
     L.recordHistory(h, 2, tel(10), lap(0), null, 1000);
     L.recordHistory(h, 2, tel(20), lap(4), null, 1500);
     const snap = JSON.parse(JSON.stringify(L.historySnapshot(h, 2, 2000)));
-    assert.deepEqual(snap.trail, [1000, 10, 0.5, 0, 3, null, null, 500, 20, 0.5, 0, 3, null, null], 'packed: age, then the sample');
+    assert.deepEqual(snap.trail, [1000, 10, 0.5, 0, 3, null, null, 0, 500, 20, 0.5, 0, 3, null, null, 4], 'packed: age, then the sample');
     assert.deepEqual(L.historyTrail(snap, 50000), [
-      {t: 49000, speed: 10, thr: 0.5, brk: 0, gear: 3, ers: null, mode: null},
-      {t: 49500, speed: 20, thr: 0.5, brk: 0, gear: 3, ers: null, mode: null},
+      {t: 49000, speed: 10, thr: 0.5, brk: 0, gear: 3, ers: null, mode: null, ld: 0},
+      {t: 49500, speed: 20, thr: 0.5, brk: 0, gear: 3, ers: null, mode: null, ld: 4},
     ]);
     assert.deepEqual(L.historyLaps(snap).cur, h.laps.get(2).cur, 'lap traces come back as recorded');
     assert.equal(L.historyLaps({trail: [], lt: null}), null);
@@ -308,6 +310,111 @@ describe('dashboard arrangement', () => {
     const same = L.moveSection(def, 'a', 9, 0);
     assert.deepEqual(same, def);
     assert.notEqual(same.cols[0], def.cols[0]);
+  });
+});
+
+describe('track outlines', () => {
+  // a ring of buckets 0..n-1 (8 m apart) on a circle
+  const ring = (n, skip = () => false) => {
+    const t = new Map();
+    for (let k = 0; k < n; k++) if (!skip(k)) t.set(k, {x: Math.cos((k / n) * 2 * Math.PI) * 200, z: Math.sin((k / n) * 2 * Math.PI) * 200});
+    return t;
+  };
+  test('complete: nearly every bucket, no long gap (one across the start line counts once)', () => {
+    assert.equal(L.outlineComplete(ring(100), 800), true);
+    assert.equal(L.outlineComplete(ring(100, k => k % 50 === 1), 800), true, '98% is enough');
+    assert.equal(L.outlineComplete(ring(100, k => k % 30 === 1), 800), false, '96% is not');
+    // 300 buckets: a 5-bucket hole is still 98% coverage, so it's the gap that counts
+    assert.equal(L.outlineComplete(ring(300, k => k >= 50 && k < 55), 2400), false, 'a 5-bucket hole');
+    assert.equal(L.outlineComplete(ring(300, k => k >= 50 && k < 54), 2400), true, 'a 4-bucket hole');
+    assert.equal(L.outlineComplete(ring(300, k => k >= 298 || k < 3), 2400), false, '5 missing across the line');
+    assert.equal(L.outlineComplete(ring(300, k => k >= 298 || k < 2), 2400), true, '4 across the line');
+    assert.equal(L.outlineComplete(new Map(), 0), false);
+    assert.equal(L.outlineComplete(ring(10), 800, {coverage: 0.05, maxGap: 100}), true, 'limits are options');
+  });
+  test('points: sorted, rounded, and spikes left by cars elsewhere at that lap distance dropped', () => {
+    const t = ring(100);
+    t.set(0, {x: 650, z: 0}); // on the grid, 450 m off the track at lap distance 0 (its other neighbour is across the line)
+    t.set(40, {x: -3000, z: 10}); // and a spike in the middle
+    t.get(10).x += 0.04321;
+    const pts = L.outlinePoints(t, 800);
+    assert.equal(pts.length, 98);
+    assert.deepEqual(pts.map(p => p[0]).slice(0, 3), [1, 2, 3], 'the spike at the line is gone too (its neighbour is across it)');
+    assert.ok(!pts.some(p => p[0] === 40));
+    assert.equal(pts.find(p => p[0] === 10)[1], Math.round(t.get(10).x * 10) / 10);
+  });
+});
+
+describe('official corners on the game outline', () => {
+  // an asymmetric closed shape, as game outline points [bucket, x, z] 8 m apart along it (lap distance = bucket * 8)
+  const shape = u => [Math.cos(u) * (300 + 80 * Math.cos(3 * u)) + 60 * Math.sin(2 * u), Math.sin(u) * (180 + 50 * Math.sin(u))];
+  const n = 600;
+  const gamePts = Array.from({length: n}, (_, k) => [k, ...shape((k / n) * 2 * Math.PI)]);
+  // the game's lap distance for a point on the shape: its bucket's middle
+  const dOf = k => k * L.TRACK_BUCKET_M + L.TRACK_BUCKET_M / 2;
+  const cornerKs = [40, 130, 250, 380, 520];
+  // the same shape as official data: rotated, scaled, shifted, mirrored, run the other way, starting elsewhere
+  function officialFrom({rotate = 0.7, scale = 13, mirror = true, reverse = true, start = 211} = {}) {
+    const tf = ([x, z]) => {
+      const y = mirror ? -z : z;
+      return [Math.round((x * Math.cos(rotate) - y * Math.sin(rotate)) * scale + 4000), Math.round((x * Math.sin(rotate) + y * Math.cos(rotate)) * scale - 900)];
+    };
+    let outline = gamePts.map(p => tf([p[1], p[2]])).filter((p, i) => i % 2 === 0);
+    if (reverse) outline.reverse();
+    outline = outline.slice(start).concat(outline.slice(0, start));
+    const corners = cornerKs.map((k, i) => { const [x, y] = tf([gamePts[k][1], gamePts[k][2]]); return {n: String(i + 1), x, y}; });
+    return {outline, corners};
+  }
+  test('corners land at their lap distance however the official data is oriented', () => {
+    for (const opts of [{}, {mirror: false}, {reverse: false}, {mirror: false, reverse: false, start: 0, rotate: 0, scale: 1}, {rotate: -2.5, scale: 2.5}]) {
+      const got = L.fitCorners(gamePts, officialFrom(opts));
+      assert.deepEqual(got.map(c => c.n), ['1', '2', '3', '4', '5'], JSON.stringify(opts));
+      got.forEach((c, i) => assert.ok(Math.abs(c.d - dOf(cornerKs[i])) <= 16, `${JSON.stringify(opts)}: T${c.n} at ${c.d}, expected ${dOf(cornerKs[i])}`));
+    }
+  });
+  test('sorted by lap distance, with the official labels (letters kept)', () => {
+    const off = officialFrom();
+    off.corners = [off.corners[3], off.corners[4], off.corners[0], off.corners[1], off.corners[2]].map((c, i) => ({...c, n: ['12', '12A', '1', '2', '3'][i]}));
+    assert.deepEqual(L.fitCorners(gamePts, off).map(c => c.n), ['1', '2', '3', '12', '12A'], 'official order may start anywhere: once round the lap');
+  });
+  test('a different shape, corners in a muddled order, or missing data give no corners', () => {
+    const circle = {outline: Array.from({length: 200}, (_, i) => [Math.cos(i / 31.8) * 100, Math.sin(i / 31.8) * 100]), corners: [{n: '1', x: 100, y: 0}]};
+    assert.deepEqual(L.fitCorners(gamePts, circle), [], 'not this track');
+    const muddled = officialFrom();
+    muddled.corners = [muddled.corners[0], muddled.corners[3], muddled.corners[1], muddled.corners[4], muddled.corners[2]];
+    assert.deepEqual(L.fitCorners(gamePts, muddled), []);
+    assert.deepEqual(L.fitCorners(gamePts, undefined), []);
+    assert.deepEqual(L.fitCorners(gamePts.slice(0, 5), officialFrom()), [], 'too little outline');
+    assert.deepEqual(L.fitCorners(gamePts, {outline: [], corners: []}), []);
+  });
+});
+
+describe('corner passes on time charts', () => {
+  const corners = [{n: '1', d: 300}, {n: '2', d: 900}, {n: '16', d: 5300}];
+  const run = lds => lds.map((ld, i) => ({t: i * 100, ld}));
+  const L5400 = 5400;
+  test('a pass where the trace went through a corner, at the later sample', () => {
+    assert.deepEqual(L.cornerPasses(run([250, 299, 300, 350, 899, 905]), corners, L5400), [{t: 200, n: '1'}, {t: 500, n: '2'}]);
+  });
+  test('crossing the line: corners before and after it, in order', () => {
+    assert.deepEqual(L.cornerPasses(run([5290, 5350, 20, 310]), corners, L5400), [{t: 100, n: '16'}, {t: 300, n: '1'}]);
+    const atLine = [{n: '1', d: 10}, {n: '16', d: 5395}];
+    assert.deepEqual(L.cornerPasses(run([5390, 20]), atLine, L5400).map(p => p.n), ['1', '16'], 'both sides of the line in one step');
+    assert.deepEqual(L.cornerPasses(run([5390, 20]), corners), [], 'no track length: a jump back is never a lap');
+  });
+  test('flashbacks, seeks, unknown positions and no corners add nothing', () => {
+    assert.deepEqual(L.cornerPasses(run([950, 250, 310]), corners, L5400).map(p => p.n), ['1'], 'the flashback is skipped, then T1 is driven');
+    assert.deepEqual(L.cornerPasses(run([5100, 200]), corners, L5400), [], 'a flashback near the line is not a lap either');
+    assert.deepEqual(L.cornerPasses(run([100, 2000]), corners, L5400), [], 'a seek forward');
+    assert.deepEqual(L.cornerPasses(run([250, null, 350]), corners, L5400), []);
+    assert.deepEqual(L.cornerPasses(run([250, 350]), []), []);
+    assert.deepEqual(L.cornerPasses(run([250, 350]), undefined), []);
+  });
+  test('the corner near a lap distance', () => {
+    assert.equal(L.cornerAt(corners, 880).n, '2');
+    assert.equal(L.cornerAt(corners, 600), null);
+    assert.equal(L.cornerAt(corners, 600, 300).n, '1', 'nearest within the range');
+    assert.equal(L.cornerAt(undefined, 600), null);
   });
 });
 

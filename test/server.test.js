@@ -11,7 +11,7 @@ const WebSocket = require('ws');
 const {createDashboard, listRecordings, describeRecording, teamFor, minutesToMs, localIps, demoRivals, demoFrame, demoPos} = require('../server');
 const {loadRecording, createRecordingWriter, HEADER_BYTES} = require('../replay');
 const {historyTrail, historyLaps} = require('../public/lib');
-const {fixturePackets, ROOT} = require('./helpers');
+const {fixturePackets, ROOT, FIXTURE} = require('./helpers');
 
 const quiet = {log() {}, warn() {}, error() {}};
 const tmpDirs = [];
@@ -25,7 +25,7 @@ after(() => tmpDirs.forEach(d => fs.rmSync(d, {recursive: true, force: true})));
 // A dashboard that isn't listening: packets are fed straight into handlePacket(). All are stopped after the run.
 const dashboards = [];
 function offline(opts = {}) {
-  const d = createDashboard({httpPort: 0, udpPort: 0, recDir: tmpDir(), log: quiet, ...opts});
+  const d = createDashboard({httpPort: 0, udpPort: 0, recDir: tmpDir(), trackDir: tmpDir(), log: quiet, ...opts});
   dashboards.push(d);
   return d;
 }
@@ -569,6 +569,137 @@ describe('replay list', () => {
     const other = (await post(e.ports.http, {file: 'old.jsonl'})).body.port;
     await e.stop();
     assert.equal(await gone(other), true, 'parent stop closes its replays');
+  });
+});
+
+describe('track maps', () => {
+  // the fixture covers only a couple of seconds of Catalunya (4664 m): lowered limits make that "a whole lap"
+  const easy = {coverage: 0.05, maxGap: Infinity};
+  // as the server does: the cars' positions every few packets
+  const learnFrom = opts => {
+    const d = offline({trackComplete: easy, bundledTrackDir: tmpDir(), ...opts});
+    fixturePackets().forEach((p, i) => {
+      d.handlePacket(p.buf);
+      if (i % 5 === 0) d.refreshState();
+    });
+    d.refreshState();
+    return d;
+  };
+  test('an outline learned from the cars is saved once, with the track and its points', () => {
+    const trackDir = tmpDir(), logs = [];
+    const d = learnFrom({trackDir, log: {...quiet, log: m => logs.push(m)}});
+    assert.deepEqual(d.state.trackMap, {trackId: 4, trackLength: 4664, available: true});
+    const saved = JSON.parse(fs.readFileSync(path.join(trackDir, '4-4664.json'), 'utf8'));
+    assert.equal(saved.name, 'Catalunya');
+    assert.equal(saved.trackLength, 4664);
+    assert.ok(saved.points.length > 5 && saved.points.every(p => p.length === 3));
+    assert.ok(Array.isArray(saved.corners), 'corners: none fit on so little of the lap, but always a list');
+    assert.equal(fs.readdirSync(trackDir).length, 1, 'no .tmp left');
+    assert.match(logs.find(m => /track map/.test(m)), /Saved the Catalunya track map \(0 corners\)/);
+    feedFixture(d);
+    d.refreshState();
+    assert.equal(logs.filter(m => /track map/.test(m)).length, 1, 'saved once');
+  });
+  test('not complete yet: nothing saved, not available', () => {
+    const trackDir = tmpDir();
+    const d = learnFrom({trackDir, trackComplete: {}});
+    assert.deepEqual(d.state.trackMap, {trackId: 4, trackLength: 4664, available: false});
+    assert.deepEqual(fs.readdirSync(trackDir), []);
+  });
+  test('a shipped outline is used as it is: nothing learned or saved', () => {
+    const trackDir = tmpDir(), bundledTrackDir = tmpDir();
+    fs.writeFileSync(path.join(bundledTrackDir, '4-4664.json'), '{"points":[],"corners":[]}');
+    const d = learnFrom({trackDir, bundledTrackDir});
+    assert.equal(d.state.trackMap.available, true);
+    assert.deepEqual(fs.readdirSync(trackDir), []);
+  });
+  test('no track maps in demo mode, or before a session', () => {
+    const demo = offline({demo: true, trackComplete: easy});
+    demo.applyDemoFrame(0);
+    assert.equal(demo.refreshState().trackMap, null);
+    assert.equal(offline().refreshState().trackMap, null);
+  });
+  test('a map that cannot be saved is reported once, not every frame', {skip: process.getuid && process.getuid() === 0}, () => {
+    const trackDir = tmpDir(), errors = [];
+    fs.chmodSync(trackDir, 0o500);
+    try {
+      const d = learnFrom({trackDir, log: {...quiet, error: m => errors.push(m)}});
+      d.refreshState();
+      d.refreshState();
+      assert.equal(errors.length, 1);
+      assert.match(errors[0], /Could not save the Catalunya track map/);
+      assert.equal(d.state.trackMap.available, false);
+    } finally {
+      fs.chmodSync(trackDir, 0o700);
+    }
+  });
+  test('corners from the official data are fitted when the outline is saved', () => {
+    // official data: the learned outline itself, scaled up, with three of its points as corners
+    const probeDir = tmpDir(), trackDir = tmpDir();
+    learnFrom({trackDir: probeDir});
+    const points = JSON.parse(fs.readFileSync(path.join(probeDir, '4-4664.json'), 'utf8')).points;
+    assert.ok(points.length > 16);
+    const pick = [0, Math.floor(points.length / 2), points.length - 1].map(i => points[i]);
+    const officialFile = path.join(tmpDir(), 'official.json');
+    fs.writeFileSync(officialFile, JSON.stringify({4: {outline: points.map(p => [p[1] * 3, p[2] * 3]), corners: pick.map((p, i) => ({n: String(i + 1), x: p[1] * 3, y: p[2] * 3}))}}));
+    learnFrom({trackDir, officialFile});
+    const saved = JSON.parse(fs.readFileSync(path.join(trackDir, '4-4664.json'), 'utf8'));
+    assert.deepEqual(saved.corners.map(c => c.n), ['1', '2', '3']);
+    assert.ok(saved.corners.every((c, i) => Math.abs(c.d - (pick[i][0] * 8 + 4)) <= 8));
+  });
+  test('without the official corner data, maps are still saved, just without numbers', () => {
+    const trackDir = tmpDir();
+    learnFrom({trackDir, officialFile: path.join(tmpDir(), 'missing.json')});
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(trackDir, '4-4664.json'), 'utf8')).corners, []);
+  });
+  test('GET /api/track: the learned map first, then the shipped one; 404 and 400 otherwise', async () => {
+    const trackDir = tmpDir(), bundledTrackDir = tmpDir();
+    fs.writeFileSync(path.join(bundledTrackDir, '5-3323.json'), '{"name":"shipped"}');
+    fs.writeFileSync(path.join(bundledTrackDir, '4-4664.json'), '{"name":"shipped"}');
+    fs.writeFileSync(path.join(trackDir, '4-4664.json'), '{"name":"learned"}');
+    const d = offline({trackDir, bundledTrackDir});
+    const {http: port} = await d.start();
+    const res = await get(port, '/api/track?id=4&len=4664');
+    assert.equal(res.status, 200);
+    assert.match(res.type, /json/);
+    assert.equal(JSON.parse(res.body).name, 'learned');
+    assert.equal(JSON.parse((await get(port, '/api/track?id=5&len=3323')).body).name, 'shipped');
+    assert.equal((await get(port, '/api/track?id=7&len=5891')).status, 404);
+    for (const bad of ['?id=../x&len=1', '?id=4', '?len=4664', '?id=4&len=12.5', '?id=-1&len=4664', '?id=4&len=4664/../../server']) {
+      assert.equal((await get(port, '/api/track' + bad)).status, 400, bad);
+    }
+    if (!(process.getuid && process.getuid() === 0)) {
+      const locked = path.join(trackDir, '8-1000.json');
+      fs.writeFileSync(locked, '{}');
+      fs.chmodSync(locked, 0o000);
+      assert.equal((await get(port, '/api/track?id=8&len=1000')).status, 404, 'there but unreadable');
+      fs.chmodSync(locked, 0o600);
+    }
+    // a map another dashboard (a replay) saves later is found within a second
+    fs.writeFileSync(path.join(trackDir, '7-5891.json'), '{"name":"later"}');
+    let status = 0;
+    for (const end = Date.now() + 3000; status !== 200 && Date.now() < end;) {
+      status = (await get(port, '/api/track?id=7&len=5891')).status;
+      if (status !== 200) await new Promise(r => setTimeout(r, 100));
+    }
+    assert.equal(status, 200);
+  });
+  test('replays opened from the list use the same track maps', async () => {
+    const recDir = tmpDir(), trackDir = tmpDir();
+    fs.copyFileSync(FIXTURE, path.join(recDir, 'cat.jsonl'));
+    fs.writeFileSync(path.join(trackDir, '4-4664.json'), '{"name":"learned"}');
+    const d = offline({recDir, trackDir});
+    const {http: port} = await d.start();
+    const opened = await new Promise((resolve, reject) => {
+      const req = http.request({host: '127.0.0.1', port, path: '/api/replays', method: 'POST'}, res => {
+        let body = '';
+        res.on('data', c => (body += c));
+        res.on('end', () => resolve(JSON.parse(body)));
+      });
+      req.on('error', reject);
+      req.end(JSON.stringify({file: 'cat.jsonl'}));
+    });
+    assert.equal(JSON.parse((await get(opened.port, '/api/track?id=4&len=4664')).body).name, 'learned');
   });
 });
 

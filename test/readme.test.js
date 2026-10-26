@@ -19,7 +19,7 @@ test('every image the README links to exists and is a PNG', () => {
 test('the commands the README gives exist as npm scripts', () => {
   const readme = fs.readFileSync(path.join(ROOT, 'README.md'), 'utf8');
   const scripts = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).scripts;
-  for (const name of new Set([...readme.matchAll(/npm run ([\w:]+)/g)].map(m => m[1]))) {
+  for (const name of new Set([...readme.matchAll(/npm run ([\w:]+(?:-\w+)*)/g)].map(m => m[1]))) {
     assert.ok(scripts[name], `npm run ${name} is not in package.json`);
   }
 });

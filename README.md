@@ -22,11 +22,11 @@ Then open http://localhost:3000. The first screen asks which format the game sen
 - **Driving**: speed, gear, RPM and shift lights, throttle, brake and steering with a rolling trace, and the ERS **battery** (green with charge, red when nearly empty, glowing blue with overtake mode) with the ERS mode under it. The 2026 active-aero mode (STRAIGHT / CORNER) is next to it; pre-2026 cars show DRS.
 - **Tyres and car**: surface and inner temperatures, pressure and wear per tyre with wear colour bands, fuel, ERS, and a damage map.
 - **Lap timing and header**: current, last and best lap, sectors, position, and a session chip with the session type, lap (of the total in a race) and time left.
-- **Track map**: built from every car's world position, so it works while you sit in the pits. Rivals are dots with labels; 2026 active-aero and DRS zones are drawn on the outline.
+- **Track map**: shows at once on the tracks it ships with (Melbourne, Sakhir, Catalunya, Monaco, Monza, Mexico, Losail), with the official corner numbers. On any other track it is built from every car's world position during the first lap, so it works while you sit in the pits, and saved, so from then on it is instant there too. Rivals are dots with labels; 2026 active-aero and DRS zones are drawn on the outline.
 - **Standings**: team colours, LAST / BEST toggle with the delta to the fastest lap, interval or gap to the leader, tyre compound, and tags for pit, flying and out laps, penalties, overtake mode and wrong-way driving.
 - **Strategy models**: tyre wear rate and laps until a wear limit, pace trend, gap trend to the cars ahead and behind, measured pit loss and where you would rejoin.
 - **Rival popup**: click a driver for a floating, draggable, resizable window with their full telemetry.
-- **Compare mode**: up to four drivers side by side, with a live trace chart or a lap-synced chart to see the difference at the same corner.
+- **Compare mode**: up to four drivers side by side, with a live trace chart or a lap-synced chart to see the difference at the same corner. Both charts, and the pedal traces, mark the corners (T1, T2, …).
 - **Custom layout**: the Layout button opens a dialog where you drag sections into up to four columns, in any order
   (arrow keys work too); drag the dividers between sections to resize them. Both are remembered.
 - **Recording and replay**: the REC button saves the raw packets, compressed losslessly (about 12× smaller); the **Replays** button lists saved recordings and opens one in a new tab with a floating player (play / pause, seek, ±10 s, loop, 0.25× to 10×).
@@ -49,6 +49,10 @@ Recordings are written to `recordings/` (git-ignored). Open the list from the he
 ![Replay mode](docs/replay.png?v=3)
 
 You can also start one from the command line with `npm run replay:dash -- recordings/<file>.f1rec`, or send a recording to a running dashboard over UDP with `npm run replay -- recordings/<file>.f1rec [--speed 2] [--loop]`.
+
+### Track maps and corners
+
+Shipped maps are in `public/tracks/`, made from the game's own coordinates with `npm run tracks:build` (it plays every recording in `recordings/` until it has a whole lap of a track that has no map yet). Maps the dashboard learns while you drive are saved to `tracks-learned/` (git-ignored). Corner numbers come from the official circuit data in `tracks/official.json`, fitted onto each outline so they match the game's lap distance; `npm run tracks:fetch-official` refreshes it from the [MultiViewer](https://multiviewer.app) circuits API (the F1 live-timing data FastF1 uses). Reverse and short layouts have no official numbering.
 
 Recordings are `.f1rec` files: a plain JSON header line, then the packets brotli-compressed as they arrive (flushed every 2 s, so a crash loses at most that). A 34-minute online race is about 39 MB instead of 450 MB. Older plain `.jsonl` recordings still play; `npm run recordings:compress` converts them, checking every packet against the original before removing it (`-- --keep` keeps the originals).
 
