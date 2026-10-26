@@ -13,6 +13,7 @@ A live F1 25 telemetry dashboard ("Pit Wall") built on the `f1-udp-parser` TypeS
 | `strategy.js` | Strategy models measured from live data (tyre wear rate, pace trend, gap trend, pit loss) |
 | `replay.js`, `listen.js` | Recording file format (read and write), replay a recording to UDP; console-only listener |
 | `scripts/compress-recordings.js` | Converts old plain `.jsonl` recordings to compressed `.f1rec`, verified packet by packet |
+| `scripts/build-tracks.js`, `scripts/fetch-official-corners.js` | Build the shipped track maps (`tracks/maps/`) from recordings; fetch the official corner data (`tracks/official.json`) |
 | `shared/` | Pure dashboard logic in TypeScript (formatting, projections, map/trace helpers, message types), used by the page, the server (compiled to `build/shared` by `npm run compile`) and the tests |
 | `web/` | The page: React + TypeScript (Vite, Zustand). Its own package: `npm --prefix web install`, built to `web/dist` by `npm run build:web` and served by `server.js` |
 | `web/src/store/` | State: `dashboard.ts` (the latest server message), `ui.ts` (settings and open windows), `layout.ts` (arrangement and sizes) |
@@ -46,6 +47,7 @@ Run `npm test` before committing (it runs the server tests, then `npm run test:w
 | `server.js` | `test/server.test.js` | `createDashboard({httpPort: 0, udpPort: 0, recDir: tmp, log: quiet})` (`offline()` also gives it a stand-in built page); feed packets with `handlePacket()` or real UDP; always `stop()` |
 | `replay.js`, `listen.js` | `test/replay.test.js`, `test/listen.test.js` | Exported functions, plus the command line via `spawn` |
 | `scripts/compress-recordings.js` | `test/replay.test.js` | `compressRecording()` / `main()` on copies of the fixture in the temp dir |
+| `scripts/build-tracks.js`, `scripts/fetch-official-corners.js` | `test/tracks.test.js` | The fixture with lowered `trackComplete` limits; a fake `fetchJson` (no network) |
 | `web/src/components/`, stores | `web/test/app.test.tsx` | `boot()` from `web/test/helpers.tsx`; `push(dashboardState({...}))`; assert on the DOM and on `sent()` messages |
 | `web/src/components/layout/` | `web/test/layout.test.tsx` | `boot()`; stub `getBoundingClientRect`; drive pointer/keyboard events |
 | `web/src/hooks/useFloatingRect.ts` (rival popup) | `web/test/popup.test.tsx` | `boot({width, height})`; drive pointer events |

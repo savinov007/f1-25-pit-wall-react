@@ -1,7 +1,8 @@
 // Compare chart: one metric for up to four drivers, against time (the live trace) or lap distance (lap-synced),
 // with a hover readout of every driver's value and the delta to the reference (first) driver.
-import {SLOT_COLORS, fmtClock, fmtDelta, fmtMetric, metricValue, nearest} from '@shared';
-import type {DistPoint, LapTraces, Metric, TimePoint} from '@shared';
+import {SLOT_COLORS, cornerAt, fmtClock, fmtDelta, fmtMetric, metricValue, nearest} from '@shared';
+import type {Corner, DistPoint, LapTraces, Metric, TimePoint} from '@shared';
+import {drawCornerPasses} from './cornerMarks';
 import type {ChartAxis, LapView} from '../store/ui';
 import {DISPLAY_FONT} from './fonts';
 
@@ -25,6 +26,8 @@ export interface CompareChartInput {
   /** Seconds of live trace shown. */
   window: number;
   trackLength: number | null | undefined;
+  /** Official corner numbers, marked on both axes. */
+  corners?: Corner[];
   format: number | undefined;
   /** Pointer x over the canvas, or null. */
   hoverX: number | null;
@@ -34,7 +37,7 @@ export interface CompareChartInput {
 type Point = (TimePoint | DistPoint) & Record<string, number | null>;
 
 export function drawCompareChart(ctx: CanvasRenderingContext2D, w: number, h: number, input: CompareChartInput): void {
-  const {slots, metric, axis, lapView, window: windowS, trackLength, format, hoverX, now} = input;
+  const {slots, metric, axis, lapView, window: windowS, trackLength, corners = [], format, hoverX, now} = input;
   const byDist = axis === 'dist';
   const field = byDist ? 'd' : 't';
 
@@ -100,6 +103,31 @@ export function drawCompareChart(ctx: CanvasRenderingContext2D, w: number, h: nu
     }
   }
 
+  // corners: at their lap distance, or where the reference (first) driver went through them
+  if (byDist && corners.length) {
+    ctx.save();
+    ctx.font = `700 9px ${DISPLAY_FONT}`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    let lastLabel = -Infinity;
+    for (const c of corners) {
+      const x = Math.round(xOf(c.d)) + 0.5;
+      if (x < PAD.l || x > PAD.l + plotW) continue;
+      ctx.strokeStyle = 'rgba(236, 238, 243, .07)';
+      ctx.beginPath();
+      ctx.moveTo(x, PAD.t + 11);
+      ctx.lineTo(x, PAD.t + plotH);
+      ctx.stroke();
+      if (x - lastLabel < 16) continue; // corners this close share one label
+      ctx.fillStyle = '#7a8195';
+      ctx.fillText('T' + c.n, x, PAD.t);
+      lastLabel = x;
+    }
+    ctx.restore();
+  } else if (!byDist && series[0]) {
+    drawCornerPasses(ctx, series[0] as TimePoint[], {corners, trackLength}, {xOf: x => PAD.l + x, now, span: windowS * 1000, plotW, top: PAD.t, bottom: PAD.t + plotH});
+  }
+
   // traces
   series.forEach((pts, k) => {
     if (pts.length < 2) return;
@@ -143,7 +171,7 @@ export function drawCompareChart(ctx: CanvasRenderingContext2D, w: number, h: nu
   }
 
   if (hoverX == null || hoverX < PAD.l || hoverX > PAD.l + plotW) return;
-  drawHover(ctx, {series, slots, metric, byDist, field, format, hoverX, now, w, plotW, plotH, key: xMin + ((hoverX - PAD.l) / plotW) * (xMax - xMin), yOf});
+  drawHover(ctx, {series, slots, metric, byDist, field, format, corners, hoverX, now, w, plotW, plotH, key: xMin + ((hoverX - PAD.l) / plotW) * (xMax - xMin), yOf});
 }
 
 // hover crosshair: every driver's value at the same point, with the delta to the reference (first) driver
@@ -156,6 +184,7 @@ function drawHover(
     byDist: boolean;
     field: 't' | 'd';
     format: number | undefined;
+    corners: Corner[];
     hoverX: number;
     now: number;
     w: number;
@@ -165,7 +194,7 @@ function drawHover(
     yOf: (v: number) => number;
   }
 ) {
-  const {series, slots, metric, byDist, field, format, hoverX, now, w, plotH, key, yOf} = o;
+  const {series, slots, metric, byDist, field, format, corners, hoverX, now, w, plotH, key, yOf} = o;
   const tolerance = byDist ? 40 : 300; // metres / ms
   let refVal: number | null = null;
   const rows = series.map((pts, k) => {
@@ -193,7 +222,8 @@ function drawHover(
     ctx.stroke();
   }
   // readout box
-  const title = byDist ? `${Math.round(key)} m` : `${((now - key) / 1000).toFixed(1)} s ago`;
+  const corner = byDist ? cornerAt(corners, key) : null;
+  const title = byDist ? `${Math.round(key)} m${corner ? ' · T' + corner.n : ''}` : `${((now - key) / 1000).toFixed(1)} s ago`;
   ctx.font = `600 11px ${DISPLAY_FONT}`;
   const lineH = 15,
     boxW = 190,

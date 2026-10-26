@@ -1,7 +1,8 @@
 // Rolling throttle and brake trace: the last 10 seconds, newest on the right.
 import {PEDAL_TRACE_MS, type PedalSample} from '../telemetry/buffers';
+import {drawCornerPasses, type CornerMarks} from './cornerMarks';
 
-export function drawPedalTrace(ctx: CanvasRenderingContext2D, w: number, h: number, trail: PedalSample[], now: number): void {
+export function drawPedalTrace(ctx: CanvasRenderingContext2D, w: number, h: number, trail: PedalSample[], now: number, marks?: CornerMarks): void {
   ctx.strokeStyle = '#161923';
   ctx.lineWidth = 1;
   for (let i = 1; i < 4; i++) {
@@ -11,6 +12,7 @@ export function drawPedalTrace(ctx: CanvasRenderingContext2D, w: number, h: numb
     ctx.lineTo(w, y);
     ctx.stroke();
   }
+  if (marks) drawCornerPasses(ctx, trail, marks, {xOf: x => x, now, span: PEDAL_TRACE_MS, plotW: w, top: 0, bottom: h});
   const series = (key: 'thr' | 'brk', rgb: string) => {
     const pts = trail.map(s => [w - ((now - s.t) / PEDAL_TRACE_MS) * w, h - 3 - s[key] * (h - 6)]);
     if (pts.length < 2) return;

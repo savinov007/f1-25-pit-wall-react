@@ -4,6 +4,7 @@ import {act} from '@testing-library/react';
 import {afterEach, beforeEach, describe, expect, test, vi} from 'vitest';
 import {useUi} from '../src/store/ui';
 import {buffers} from '../src/telemetry/buffers';
+import type {DashboardState} from '@shared';
 import {boot, dashboardState, detailFor, packHistory, text, type Page} from './helpers';
 
 const row = (p: Page, i: number) => p.$$('.srow')[i];
@@ -406,7 +407,7 @@ describe('compare mode', () => {
     const s = dashboardState();
     p.push(s);
     p.click('.comparebtn');
-    const sample = (a: number, speed: number) => ({a, speed, thr: 1, brk: 0, gear: 4, ers: 0.5, mode: 2});
+    const sample = (a: number, speed: number) => ({a, speed, thr: 1, brk: 0, gear: 4, ers: 0.5, mode: 2, ld: null});
     const pt = (d: number, speed: number) => ({d, ...sample(0, speed)});
     const lt = {lap: 3, cur: [pt(0, 100)], last: [], lastLap: null, best: [pt(0, 90), pt(50, 95)], bestLap: 2, bestTime: 90000};
     p.push({...s, compare: [{...detailFor(s, 2), history: packHistory({trail: [sample(8000, 200), sample(4000, 250)], lt})}, detailFor(s, 1)]});
@@ -540,6 +541,104 @@ describe('track map', () => {
     expect(buffers.track.size).toBeGreaterThan(0);
     p.push(dashboardState({session: {...dashboardState().session!, sessionUID: 'next'}, rivals: []}));
     expect(buffers.track.size).toBe(0);
+  });
+  // a shipped / learned map for "track 5": a ring of 416 buckets (3323 m) and a few official corners
+  const RING = Array.from({length: 416}, (_, k) => [k, Math.round(Math.cos(k / 66.2) * 400), Math.round(Math.sin(k / 66.2) * 250)]);
+  const CORNERS = [{n: '1', d: 220}, {n: '2', d: 612}, {n: '13', d: 2540}, {n: '14', d: 2572}];
+  const withMap = (s: DashboardState, available = true, trackId = 5): DashboardState => ({...s, session: {...s.session!, trackLength: 3323}, trackMap: {trackId, trackLength: 3323, available}});
+  function mapServer({status = 200, fail = false, data = {points: RING, corners: CORNERS} as object} = {}) {
+    const calls: string[] = [];
+    vi.stubGlobal('fetch', async (url: string) => {
+      calls.push(url);
+      if (fail) throw new Error('offline');
+      return {ok: status === 200, status, json: async () => data};
+    });
+    return calls;
+  }
+  const settle = () => act(async () => {});
+  afterEach(() => vi.unstubAllGlobals());
+
+  test('a known track is drawn at once, with its corner numbers', async () => {
+    const p = await boot();
+    const calls = mapServer();
+    p.push(withMap(dashboardState({rivals: []})));
+    await settle();
+    expect(calls).toEqual(['/api/track?id=5&len=3323']);
+    expect(buffers.trackPreloaded).toBe(true);
+    expect(buffers.track.size, 'the whole outline, before any car has driven').toBe(416);
+    expect(buffers.corners.map(c => c.n)).toEqual(['1', '2', '13', '14']);
+    // cars still move on it, but no longer change it
+    const outline = () => JSON.stringify([...buffers.track.entries()]);
+    const before = outline();
+    const driving = withMap(dashboardState());
+    // cars on the track, 5 m off the outline's line: a live map would learn (and shift) from them
+    driving.rivals = driving.rivals!.map((r, i) => {
+      const [k, x, z] = RING[20 + i * 10];
+      return {...r, dist: k * 8 + 1, x: x + 5, z, result: 2, pit: 0};
+    });
+    p.push(driving);
+    expect(outline()).toBe(before);
+    p.push(withMap(dashboardState()));
+    expect(calls.length, 'loaded once').toBe(1);
+  });
+  test('no map yet: learned live as before, loaded once the server has one', async () => {
+    const p = await boot();
+    const calls = mapServer();
+    p.push(withMap(dashboardState(), false));
+    await settle();
+    expect(calls.length).toBe(0);
+    expect(buffers.track.size, 'learning from the cars').toBeGreaterThan(0);
+    expect(buffers.trackPreloaded).toBe(false);
+    p.push(withMap(dashboardState(), true));
+    await settle();
+    expect(calls.length).toBe(1);
+    expect(buffers.track.size).toBe(416);
+  });
+  test('a failed request is tried again; a missing map is not asked for again and again', async () => {
+    const p = await boot();
+    let calls = mapServer({fail: true});
+    p.push(withMap(dashboardState()));
+    await settle();
+    p.push(withMap(dashboardState()));
+    await settle();
+    expect(calls.length, 'network error: retried with the next message').toBe(2);
+    calls = mapServer({status: 404});
+    p.push(withMap(dashboardState(), true, 9));
+    await settle();
+    p.push(withMap(dashboardState(), true, 9));
+    await settle();
+    expect(calls.length).toBe(1);
+    expect(buffers.trackPreloaded).toBe(false);
+  });
+  test('another track or a new session loads its own map; a late answer for the old one is dropped', async () => {
+    const p = await boot();
+    let release = () => {};
+    vi.stubGlobal('fetch', () => new Promise(resolve => {
+      release = () => resolve({ok: true, status: 200, json: async () => ({points: RING.slice(0, 10), corners: []})});
+    }));
+    p.push(withMap(dashboardState()));
+    mapServer();
+    p.push(withMap(dashboardState(), true, 6)); // the session moved on to another track
+    await settle();
+    release(); // the first track's answer arrives late
+    await settle();
+    expect(buffers.track.size).toBe(416);
+    expect(buffers.corners.length).toBe(4);
+    const calls = mapServer();
+    p.push(withMap(dashboardState({session: {...dashboardState().session!, sessionUID: 'next'}}), true, 6));
+    await settle();
+    expect(calls.length, 'same track, new session: loaded again').toBe(1);
+  });
+  test('the pedal traces keep where on the lap each sample was', async () => {
+    const p = await boot();
+    const s = dashboardState();
+    p.push({...s, lap: {...s.lap!, m_lapDistance: 1234.4}});
+    expect(buffers.pedals.at(-1)!.ld).toBe(1234);
+    p.push({...s, lap: {...s.lap!, m_lapDistance: -20}});
+    expect(buffers.pedals.at(-1)!.ld, 'before the line: unknown').toBeNull();
+    p.click(p.$$('.srow')[2]);
+    p.push({...s, detail: {...detailFor(s, 2), lap: {...s.lap!, m_lapDistance: 600}}});
+    expect(buffers.rivalPedals.at(-1)!.ld).toBe(600);
   });
   test('the legend shows only with active aero or DRS zones', async () => {
     const p = await boot();

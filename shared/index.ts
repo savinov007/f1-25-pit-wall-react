@@ -2,6 +2,7 @@
 // Nothing here touches the DOM.
 export * from './arrangement';
 export * from './constants';
+export * from './corners';
 export * from './format';
 export * from './regulations';
 export * from './strategy';

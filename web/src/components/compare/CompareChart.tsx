@@ -58,6 +58,7 @@ export function CompareChart() {
       lapView: ui.lapView,
       window: ui.window,
       trackLength: s?.session?.trackLength,
+      corners: buffers.corners,
       format: s?.session?.packetFormat,
       hoverX: hoverX.current,
       now,

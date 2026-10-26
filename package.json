@@ -35,6 +35,8 @@
     "replay": "node replay.js",
     "replay:dash": "npm run build && npm run build:web && node server.js --replay",
     "recordings:compress": "node scripts/compress-recordings.js",
+    "tracks:build": "node scripts/build-tracks.js",
+    "tracks:fetch-official": "npm run compile && node scripts/fetch-official-corners.js",
     "demo": "npm run build && npm run build:web && node server.js --demo",
     "build": "tsc",
     "build:web": "npm --prefix web run build",

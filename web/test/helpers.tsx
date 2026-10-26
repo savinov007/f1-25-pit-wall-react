@@ -42,7 +42,7 @@ export const detailFor = (s: DashboardState, idx: number) => ({
   motion: s.motion,
 });
 
-type Sample = {speed: number; thr: number; brk: number; gear: number; ers: number | null; mode: number | null};
+type Sample = {speed: number; thr: number; brk: number; gear: number; ers: number | null; mode: number | null; ld?: number | null};
 /** A server history snapshot in its packed wire form, from readable sample objects. */
 export function packHistory({trail, lt}: {trail: (Sample & {a: number})[]; lt: null | {[k: string]: unknown; cur: (Sample & {d: number})[]; last: (Sample & {d: number})[]; best: (Sample & {d: number})[] | 'last'}}) {
   return {

@@ -13,7 +13,7 @@ export const MapPanel = memo(function MapPanel() {
   }));
   const ref = useCanvasFrame((ctx, w, h) => {
     const s = getServerState();
-    drawTrackMap(ctx, w, h, {track: buffers.track, rivals: s?.rivals || [], car: buffers.car, session: s?.session});
+    drawTrackMap(ctx, w, h, {track: buffers.track, rivals: s?.rivals || [], car: buffers.car, session: s?.session, corners: buffers.corners});
   });
   return (
     <>

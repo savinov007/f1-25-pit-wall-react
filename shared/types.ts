@@ -184,6 +184,19 @@ export interface ReplayStatus {
   packets?: number;
 }
 
+/** A numbered corner at a lap distance in metres. */
+export interface Corner {
+  n: string;
+  d: number;
+}
+
+/** Whether the server has a map for this session's track (fetched from /api/track). */
+export interface TrackMapInfo {
+  trackId: number;
+  trackLength: number;
+  available: boolean;
+}
+
 export interface DashboardState {
   connected: boolean;
   hasData: boolean;
@@ -200,11 +213,12 @@ export interface DashboardState {
   motion?: Motion | null;
   rivals?: Rival[];
   pitLoss?: {ms: number; samples: number} | null;
+  trackMap?: TrackMapInfo | null;
   detail?: CarDetail;
   compare?: CarDetail[];
 }
 
-/** One chart sample: pedals, gear, battery charge (0..1) and ERS deploy mode; null = not known yet. */
+/** One chart sample: pedals, gear, battery charge (0..1), ERS deploy mode and lap distance; null = not known yet. */
 export interface TraceSample {
   speed: number;
   thr: number;
@@ -212,6 +226,8 @@ export interface TraceSample {
   gear: number;
   ers: number | null;
   mode: number | null;
+  /** Metres round the lap (marks the corners on time charts). */
+  ld: number | null;
 }
 export type TimePoint = TraceSample & {t: number};
 export type DistPoint = TraceSample & {d: number};

@@ -1,6 +1,6 @@
 // Track map: the learned outline, 2026 active aero and DRS zones, every rival and your car.
 import {TRACK_BUCKET_M, zoneRanges} from '@shared';
-import type {Motion, Rival, Session, TrackOutline, Zone} from '@shared';
+import type {Corner, Motion, Rival, Session, TrackOutline, Zone} from '@shared';
 import {DISPLAY_FONT} from './fonts';
 
 export const AERO_ZONE_COLOR = 'rgba(51, 214, 232, .9)';
@@ -11,9 +11,11 @@ export interface MapInput {
   rivals: Rival[];
   car: Motion | null;
   session: Session | null | undefined;
+  /** Official corner numbers, drawn beside the outline. */
+  corners?: Corner[];
 }
 
-export function drawTrackMap(ctx: CanvasRenderingContext2D, w: number, h: number, {track, rivals: all, car, session}: MapInput): void {
+export function drawTrackMap(ctx: CanvasRenderingContext2D, w: number, h: number, {track, rivals: all, car, session, corners = []}: MapInput): void {
   const rivals = all.filter(r => !r.player && (r.x || r.z)) as (Rival & {x: number; z: number})[];
   const keys = [...track.keys()].sort((a, b) => a - b);
   const pts = [...keys.map(k => track.get(k)!), ...rivals, ...(car ? [car] : [])];
@@ -94,6 +96,8 @@ export function drawTrackMap(ctx: CanvasRenderingContext2D, w: number, h: number
     drawZones(zoneRanges(session.drsZones, session.trackLength), DRS_ZONE_COLOR);
   }
 
+  if (corners.length && keys.length > 1) drawMapCorners(ctx, track, keys, corners, px, py);
+
   ctx.font = `700 11px ${DISPLAY_FONT}`;
   ctx.textAlign = 'center';
   for (const r of rivals) {
@@ -127,4 +131,59 @@ export function drawTrackMap(ctx: CanvasRenderingContext2D, w: number, h: number
     ctx.strokeStyle = '#e10600';
     ctx.stroke();
   }
+}
+
+/** Official corner numbers just beside the track: of the two sides, the one further from the rest of the outline. */
+function drawMapCorners(
+  ctx: CanvasRenderingContext2D,
+  track: TrackOutline,
+  keys: number[],
+  corners: Corner[],
+  px: (p: {x: number}) => number,
+  py: (p: {z: number}) => number
+) {
+  const at = (k: number) => {
+    for (let o = 0; o < 12; o++) {
+      const p = track.get(k + o) || track.get(k - o);
+      if (p) return p;
+    }
+    return null;
+  };
+  const outline = keys.filter((_, i) => i % 3 === 0).map(k => [px(track.get(k)!), py(track.get(k)!)]);
+  const clearance = (x: number, y: number) => outline.reduce((m, [ox, oy]) => Math.min(m, Math.hypot(ox - x, oy - y)), Infinity);
+  ctx.font = `700 9px ${DISPLAY_FONT}`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  const placed: number[][] = [];
+  const free = (x: number, y: number) => placed.every(q => Math.hypot(q[0] - x, q[1] - y) >= 16);
+  for (const c of corners) {
+    const k = Math.floor(c.d / TRACK_BUCKET_M),
+      p = at(k),
+      a = at(k - 4),
+      b = at(k + 4);
+    if (!p || !a || !b) continue;
+    const tx = px(b) - px(a),
+      ty = py(b) - py(a),
+      len = Math.hypot(tx, ty) || 1;
+    const nx = -ty / len,
+      ny = tx / len,
+      x0 = px(p),
+      y0 = py(p),
+      gap = 15;
+    const side = clearance(x0 + nx * gap, y0 + ny * gap) >= clearance(x0 - nx * gap, y0 - ny * gap) ? 1 : -1;
+    // corners close together (chicanes): move a label further out, or across, rather than on top of another
+    const spots = [[side, gap], [side, gap * 2], [-side, gap], [-side, gap * 2]].map(([s, g]) => [x0 + nx * g * s, y0 + ny * g * s]);
+    const [x, y] = spots.find(([sx, sy]) => free(sx, sy)) || spots[0];
+    placed.push([x, y]);
+    ctx.beginPath();
+    ctx.arc(x, y, 7.5, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(15, 17, 24, .9)';
+    ctx.fill();
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = '#454b5e';
+    ctx.stroke();
+    ctx.fillStyle = '#aeb3c2';
+    ctx.fillText(c.n, x, y + 0.5);
+  }
+  ctx.textBaseline = 'alphabetic';
 }

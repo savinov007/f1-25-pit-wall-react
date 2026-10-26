@@ -44,17 +44,17 @@ describe('track map', () => {
 describe('pedal trace', () => {
   test('draws throttle and brake, nothing from a single sample', () => {
     let f = fakeContext();
-    drawPedalTrace(f.ctx, 300, 100, [{t: 0, thr: 1, brk: 0}], 0);
+    drawPedalTrace(f.ctx, 300, 100, [{t: 0, thr: 1, brk: 0, ld: null}], 0);
     expect(f.log.filter(c => c[0] === 'fill').length).toBe(0);
     f = fakeContext();
-    drawPedalTrace(f.ctx, 300, 100, [{t: 0, thr: 1, brk: 0}, {t: 50, thr: 0.5, brk: 0.2}], 100);
+    drawPedalTrace(f.ctx, 300, 100, [{t: 0, thr: 1, brk: 0, ld: null}, {t: 50, thr: 0.5, brk: 0.2, ld: null}], 100);
     expect(strokes(f.log)).toContain('rgb(31, 209, 102)');
     expect(strokes(f.log)).toContain('rgb(255, 45, 31)');
   });
 });
 
 describe('compare chart', () => {
-  const pt = (d: number, mode: number | null = 2, ers: number | null = 0.5): DistPoint => ({d, speed: 200, thr: 1, brk: 0, gear: 6, ers, mode});
+  const pt = (d: number, mode: number | null = 2, ers: number | null = 0.5): DistPoint => ({d, speed: 200, thr: 1, brk: 0, gear: 6, ers, mode, ld: d});
   const laps = (lt: Partial<LapTraces>): LapTraces => ({lap: 99, cur: [], last: [], lastLap: null, best: [], bestLap: null, bestTime: 0, invalid: false, ...lt});
   const input = (o: Partial<CompareChartInput>): CompareChartInput => ({
     slots: [], metric: 'speed', axis: 'dist', lapView: 'last', window: 20, trackLength: 5000, format: 2026, hoverX: null, now: 0, ...o,
@@ -101,7 +101,7 @@ describe('compare chart', () => {
   });
   test('the live trace draws only the chosen window of the 3 minutes kept', () => {
     const now = 200000;
-    const trail: TimePoint[] = Array.from({length: 180}, (_, i) => ({t: now - (179 - i) * 1000, speed: 200, thr: 1, brk: 0, gear: 6, ers: 0.5, mode: 2}));
+    const trail: TimePoint[] = Array.from({length: 180}, (_, i) => ({t: now - (179 - i) * 1000, speed: 200, thr: 1, brk: 0, gear: 6, ers: 0.5, mode: 2, ld: null}));
     const slot = {name: 'YOU', trail, laps: undefined};
     const run = (window: number) => {
       const f = draw({axis: 'time', window, slots: [slot], now});
@@ -116,5 +116,44 @@ describe('compare chart', () => {
     expect(long.labels).toContain('-3:00');
     expect(long.labels).toContain('-30s');
     expect(long.points, 'the whole 3 minutes is drawn').toBeGreaterThan(short.points + 100);
+  });
+});
+
+describe('corners', () => {
+  // official corners on a 3323 m lap
+  const CORNERS = [{n: '1', d: 220}, {n: '2', d: 612}, {n: '13', d: 2540}, {n: '14', d: 2572}];
+  const RING: [number, number, number][] = Array.from({length: 416}, (_, k) => [k, Math.round(Math.cos(k / 66.2) * 400), Math.round(Math.sin(k / 66.2) * 250)]);
+  const ring = () => new Map(RING.map(([k, x, z]) => [k, {x, z}]));
+
+  test('the map numbers the corners beside the outline, close ones apart', () => {
+    const f = fakeContext();
+    drawTrackMap(f.ctx, 400, 300, {track: ring(), rivals: [], car: null, session: null, corners: CORNERS});
+    expect(f.labels().filter(t => /^\d+$/.test(t))).toEqual(['1', '2', '13', '14']);
+    const pos = (n: string) => f.log.find(c => c[0] === 'fillText' && c[1] === n)!.slice(2, 4) as number[];
+    const [a, b] = [pos('13'), pos('14')];
+    expect(Math.hypot(a[0] - b[0], a[1] - b[1]), "close corners (13, 14) don't sit on top of each other").toBeGreaterThanOrEqual(16);
+  });
+  test('the compare distance chart marks the corners; the hover names the one under the cursor', () => {
+    const corners = [...CORNERS, {n: '15', d: 2580}];
+    const base: CompareChartInput = {slots: [], metric: 'speed', axis: 'dist', lapView: 'last', window: 20, trackLength: 3323, corners, format: 2026, hoverX: null, now: 0};
+    let f = fakeContext();
+    drawCompareChart(f.ctx, 852, 200, base); // 800 px of plot for 3323 m
+    expect(f.labels().filter(l => /^T/.test(l)), 'T14 and T15 are too close to T13 for their own labels').toEqual(['T1', 'T2', 'T13']);
+    const laps: LapTraces = {lap: 9, cur: [], last: [{d: 600, speed: 90, thr: 0, brk: 1, gear: 2, ers: 0.5, mode: 1, ld: 600}], lastLap: 8, best: [], bestLap: null, bestTime: 0, invalid: false};
+    f = fakeContext();
+    drawCompareChart(f.ctx, 852, 200, {...base, slots: [{name: 'YOU', trail: undefined, laps}], hoverX: 44 + (610 / 3323) * 800});
+    expect(f.labels()).toContain('610 m · T2');
+  });
+  test('time charts mark where the car went through each corner', () => {
+    const now = 10000;
+    let f = fakeContext();
+    const pedals = [190, 205, 215, 225, 240].map((ld, i) => ({t: now - 4000 + i * 100, thr: 1, brk: 0, ld}));
+    drawPedalTrace(f.ctx, 300, 80, pedals, now, {corners: CORNERS, trackLength: 3323});
+    expect(f.labels()).toEqual(['T1']);
+    // compare's live time chart: the reference driver's passes
+    const trail: TimePoint[] = [600, 610, 620, 2530, 2545, 2575].map((ld, i) => ({t: now - 9000 + i * 1000, speed: 100, thr: 1, brk: 0, gear: 4, ers: 0.5, mode: 1, ld}));
+    f = fakeContext();
+    drawCompareChart(f.ctx, 600, 200, {slots: [{name: 'YOU', trail, laps: undefined}], metric: 'speed', axis: 'time', lapView: 'cur', window: 20, trackLength: 3323, corners: CORNERS, format: 2026, hoverX: null, now});
+    expect(f.labels().filter(l => /^T/.test(l))).toEqual(['T2', 'T13', 'T14']);
   });
 });

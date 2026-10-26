@@ -3,7 +3,8 @@
 import type {CarStatus, Telemetry, Telemetry2} from '@shared';
 import {drawPedalTrace} from '../../charts/pedalTrace';
 import {useCanvasFrame} from '../../hooks/useCanvasFrame';
-import type {PedalSample} from '../../telemetry/buffers';
+import {getServerState} from '../../store/dashboard';
+import {buffers, type PedalSample} from '../../telemetry/buffers';
 import {Badges, gearText} from './Badges';
 
 interface Props {
@@ -60,8 +61,10 @@ export function Pedals({telemetry: t}: {telemetry: Telemetry | null | undefined}
   );
 }
 
-/** The rolling 10 s throttle / brake trace; `trail` is read on every frame, so pass a getter. */
+/** The rolling 10 s throttle / brake trace with the corners marked; `trail` is read on every frame, so pass a getter. */
 export function PedalTrace({trail}: {trail: () => PedalSample[]}) {
-  const ref = useCanvasFrame((ctx, w, h, now) => drawPedalTrace(ctx, w, h, trail(), now));
+  const ref = useCanvasFrame((ctx, w, h, now) =>
+    drawPedalTrace(ctx, w, h, trail(), now, {corners: buffers.corners, trackLength: getServerState()?.session?.trackLength})
+  );
   return <canvas ref={ref} className="trace" />;
 }
