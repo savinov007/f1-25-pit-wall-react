@@ -6,11 +6,17 @@ const {WebSocketServer} = require('ws');
 const {F1TelemetryClient, constants} = require('./build/src');
 const {StrategyTracker} = require('./strategy');
 const {loadRecording, createPlayer, createRecordingWriter, readHeader, isRecordingName, REC_EXT, HEADER_BYTES} = require('./replay');
-const {overtakeOn, createHistory, recordHistory, historySnapshot} = require('./public/lib');
+const {overtakeOn, createHistory, recordHistory, historySnapshot} = require('./build/shared');
 
 const {PACKETS, TRACKS, TEAMS} = constants;
-const PUBLIC = path.join(__dirname, 'public');
-const MIME = {'.html': 'text/html', '.css': 'text/css', '.js': 'text/javascript', '.svg': 'image/svg+xml'};
+// the React page, built by `npm run build:web` (web/ -> web/dist)
+const PUBLIC = path.join(__dirname, 'web', 'dist');
+const MIME = {
+  '.html': 'text/html', '.css': 'text/css', '.js': 'text/javascript', '.svg': 'image/svg+xml',
+  '.json': 'application/json', '.png': 'image/png', '.woff2': 'font/woff2', '.map': 'application/json',
+};
+// Vite puts a content hash in every file name under assets/, so those never change and can be cached for good
+const IMMUTABLE = /^[\\/]assets[\\/]/;
 const REC_MAX_BYTES = 500 * 1024 * 1024; // on disk, compressed: about 7 hours of a full online race
 const REC_FLUSH_MS = 2000; // a crash loses at most this much of a recording
 const MAX_COMPARE = 4;
@@ -202,6 +208,7 @@ function createDashboard(options = {}) {
     replayIdleMs = 60000, // a replay dashboard opened from the list stops this long after its last tab closes
     onIdle = null,
     recDir = path.join(__dirname, 'recordings'),
+    publicDir = PUBLIC,
     recMaxBytes = REC_MAX_BYTES,
     recFlushMs = REC_FLUSH_MS,
     broadcastMs = 33,
@@ -352,7 +359,7 @@ function createDashboard(options = {}) {
     const name = path.basename(String(file || ''));
     if (!isRecordingName(name) || !fs.existsSync(path.join(recDir, name))) throw new Error('No such recording');
     const dash = createDashboard({
-      replayFile: path.join(recDir, name), httpPort: 0, udpPort: 0, recDir, log, broadcastMs,
+      replayFile: path.join(recDir, name), httpPort: 0, udpPort: 0, recDir, publicDir, log, broadcastMs,
       replayIdleMs, onIdle: () => { replays.delete(dash); dash.stop(); },
     });
     replays.add(dash);
@@ -391,17 +398,24 @@ function createDashboard(options = {}) {
       res.writeHead(400).end('Bad request');
       return;
     }
-    const file = path.join(PUBLIC, name);
-    if (!file.startsWith(PUBLIC)) {
+    const file = path.join(publicDir, name);
+    if (!file.startsWith(publicDir)) {
       res.writeHead(403).end();
       return;
     }
     fs.readFile(file, (err, data) => {
       if (err) {
+        if (name === 'index.html') {
+          res.writeHead(503, {'Content-Type': 'text/plain'}).end('The dashboard page is not built yet: run `npm run build:web`.');
+          return;
+        }
         res.writeHead(404).end('Not found');
         return;
       }
-      res.writeHead(200, {'Content-Type': MIME[path.extname(file)] || 'application/octet-stream'});
+      res.writeHead(200, {
+        'Content-Type': MIME[path.extname(file)] || 'application/octet-stream',
+        'Cache-Control': IMMUTABLE.test(name) ? 'public, max-age=31536000, immutable' : 'no-cache',
+      });
       res.end(data);
     });
   });
@@ -726,6 +740,7 @@ if (require.main === module) {
   const dashboard = createDashboard({
     httpPort: Number(process.env.PORT) || 3000,
     udpPort: Number(process.env.UDP_PORT) || 20777,
+    publicDir: process.env.PUBLIC_DIR ? path.resolve(process.env.PUBLIC_DIR) : undefined,
     demo: process.argv.includes('--demo'),
     replayFile,
   });

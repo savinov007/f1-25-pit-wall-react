@@ -10,7 +10,7 @@ const {spawn} = require('child_process');
 const WebSocket = require('ws');
 const {createDashboard, listRecordings, describeRecording, teamFor, minutesToMs, localIps, demoRivals, demoFrame, demoPos} = require('../server');
 const {loadRecording, createRecordingWriter, HEADER_BYTES} = require('../replay');
-const {historyTrail, historyLaps} = require('../public/lib');
+const {historyTrail, historyLaps} = require('../build/shared');
 const {fixturePackets, ROOT} = require('./helpers');
 
 const quiet = {log() {}, warn() {}, error() {}};
@@ -22,10 +22,22 @@ const tmpDir = () => {
 };
 after(() => tmpDirs.forEach(d => fs.rmSync(d, {recursive: true, force: true})));
 
+// A built page as Vite lays it out (index.html, hashed files under assets/, public/ files at the top), so the
+// tests don't depend on `npm run build:web` having been run.
+function builtPage() {
+  const dir = tmpDir();
+  fs.mkdirSync(path.join(dir, 'assets'));
+  fs.writeFileSync(path.join(dir, 'index.html'), '<!doctype html><title>F1 25 Pit Wall</title>');
+  fs.writeFileSync(path.join(dir, 'assets', 'index-abc123.js'), 'console.log(1)');
+  fs.writeFileSync(path.join(dir, 'assets', 'index-abc123.css'), 'body{}');
+  fs.writeFileSync(path.join(dir, 'favicon.svg'), '<svg/>');
+  return dir;
+}
+
 // A dashboard that isn't listening: packets are fed straight into handlePacket(). All are stopped after the run.
 const dashboards = [];
 function offline(opts = {}) {
-  const d = createDashboard({httpPort: 0, udpPort: 0, recDir: tmpDir(), log: quiet, ...opts});
+  const d = createDashboard({httpPort: 0, udpPort: 0, recDir: tmpDir(), publicDir: builtPage(), log: quiet, ...opts});
   dashboards.push(d);
   return d;
 }
@@ -35,7 +47,7 @@ const get = (port, url) => new Promise((resolve, reject) => {
   http.get({host: '127.0.0.1', port, path: url}, res => {
     let body = '';
     res.on('data', c => (body += c));
-    res.on('end', () => resolve({status: res.statusCode, type: res.headers['content-type'], body}));
+    res.on('end', () => resolve({status: res.statusCode, type: res.headers['content-type'], cache: res.headers['cache-control'], body}));
   }).on('error', reject);
 });
 const until = async (fn, ms = 3000) => {
@@ -515,7 +527,7 @@ describe('replay list', () => {
     const msg = await new Promise(resolve => ws.on('message', m => resolve(JSON.parse(m))));
     assert.equal(msg.replay.file, 'new.jsonl');
     assert.equal(msg.replay.playing, true);
-    assert.equal((await get(opened.body.port, '/')).status, 200, 'serves the dashboard page');
+    assert.equal((await get(opened.body.port, '/')).status, 200, 'serves the same dashboard page as the live one');
     ws.close();
     // the live dashboard is untouched
     assert.equal(d.refreshState().replay, null);
@@ -642,21 +654,24 @@ describe('recording', () => {
 
 describe('running server', () => {
   test('serves the page and static files, and blocks escapes', async () => {
-    const d = offline();
+    const d = offline({publicDir: builtPage()});
     const {http: port} = await d.start();
     try {
       const index = await get(port, '/');
       assert.equal(index.status, 200);
       assert.equal(index.type, 'text/html');
       assert.match(index.body, /<title>F1 25 Pit Wall<\/title>/);
-      assert.equal((await get(port, '/lib.js')).type, 'text/javascript');
-      assert.equal((await get(port, '/style.css')).type, 'text/css');
+      assert.equal(index.cache, 'no-cache', 'the page is checked every time, so a rebuild shows at once');
+      const js = await get(port, '/assets/index-abc123.js');
+      assert.equal(js.type, 'text/javascript');
+      assert.equal(js.cache, 'public, max-age=31536000, immutable', 'hashed assets are cached for good');
+      assert.equal((await get(port, '/assets/index-abc123.css')).type, 'text/css');
       assert.equal((await get(port, '/favicon.svg')).type, 'image/svg+xml');
       assert.equal((await get(port, '/nope.js')).status, 404);
       assert.equal((await get(port, '/%E0')).status, 400);
-      assert.equal((await get(port, '/%2e%2e/server.js')).status, 404, 'cannot read files outside public/');
+      assert.equal((await get(port, '/%2e%2e/server.js')).status, 404, 'cannot read files outside the page directory');
       assert.equal((await get(port, '/../package.json')).status, 404);
-      // a request path without the leading slash could climb out of public/: refused
+      // a request path without the leading slash could climb out of the page directory: refused
       const raw = await new Promise(resolve => {
         const sock = net.connect(port, '127.0.0.1', () => sock.write('GET x/../../server.js HTTP/1.1\r\nHost: x\r\n\r\n'));
         let data = '';
@@ -670,6 +685,19 @@ describe('running server', () => {
       const res = {status: null, writeHead(code) { this.status = code; return this; }, end() {}};
       d.httpServer.emit('request', {url: 'x/../../server.js'}, res);
       assert.equal(res.status, 403);
+    } finally {
+      await d.stop();
+    }
+  });
+
+  test('says how to build the page when it has not been built', async () => {
+    const d = offline({publicDir: tmpDir()});
+    const {http: port} = await d.start();
+    try {
+      const index = await get(port, '/');
+      assert.equal(index.status, 503);
+      assert.match(index.body, /npm run build:web/);
+      assert.equal((await get(port, '/assets/missing.js')).status, 404, 'other files are plain not-found');
     } finally {
       await d.stop();
     }
@@ -738,7 +766,7 @@ describe('command line', () => {
   async function launch(args, env = {}) {
     const port = 30000 + Math.floor(Math.random() * 20000);
     const child = spawn(process.execPath, [path.join(ROOT, 'server.js'), ...args], {
-      env: {...process.env, PORT: String(port), UDP_PORT: String(port + 1), ...env},
+      env: {...process.env, PORT: String(port), UDP_PORT: String(port + 1), PUBLIC_DIR: builtPage(), ...env},
     });
     const out = {text: ''};
     child.stdout.on('data', c => (out.text += c));
