@@ -1,6 +1,6 @@
 const {test, describe} = require('node:test');
 const assert = require('node:assert/strict');
-const L = require('../public/lib');
+const L = require('../build/shared'); // shared/*.ts, compiled by `npm run compile` (pretest)
 
 describe('formatting', () => {
   test('lap times', () => {
@@ -35,12 +35,12 @@ describe('formatting', () => {
     assert.equal(L.leaderGap({pos: 3, gapLeader: 0}), null, 'no timing yet');
     assert.equal(L.leaderGap({pos: 3, gapLeader: 9e6}), null, 'garage value');
   });
-  test('escaping and capitalising', () => {
-    assert.equal(L.esc('<b a="x">&</b>'), '&lt;b a=&quot;x&quot;&gt;&amp;&lt;/b&gt;');
-    assert.equal(L.esc(42), '42');
+  // React escapes text it renders, so names stay plain text here (the page no longer builds HTML strings)
+  test('capitalising and short names', () => {
     assert.equal(L.cap('fuelTxt'), 'FuelTxt');
     assert.equal(L.nameOf({name: 'verstappen-long-name'}), 'VERSTAPPEN-L');
-    assert.equal(L.nameOf({name: '<x>'}), '&lt;X&gt;');
+    assert.equal(L.nameOf({name: '<x>'}), '<X>');
+    assert.equal(L.esc, undefined, 'no HTML escaping helper left to misuse');
   });
   test('laps', () => {
     assert.equal(L.fmtLaps(null), '–');
