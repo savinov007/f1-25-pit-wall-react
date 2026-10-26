@@ -1,5 +1,5 @@
 // Regenerates the README screenshots in docs/ from demo data and the test fixture (no private recordings):
-//   node scripts/screenshots.js        (needs Google Chrome)
+//   npm run build:web && node scripts/screenshots.js        (needs Google Chrome)
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -13,7 +13,7 @@ const FIXTURE = path.join(ROOT, 'test', 'fixtures', 'catalunya-f125.jsonl');
 const CHROME = process.env.CHROME || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 // the live traces keep 10 s (driving, popup) and 20 s (compare); wait that long so the charts are full
-const TRACE_MS = 11000, COMPARE_MS = 21000;
+const TRACE_MS = 11000, COMPARE_MS = 21000, LAPS_MS = 61000;
 const quiet = {log() {}, warn() {}, error() {}};
 
 async function main() {
@@ -51,46 +51,52 @@ async function main() {
   };
 
   try {
+    // the page is driven through its own controls, as a user would
+    const click = sel => js(`document.querySelector(${JSON.stringify(sel)}).click()`);
+
     // demo dashboard with a rival popup
     await open(demo.ports.http);
     await sleep(TRACE_MS);
     await shot('dashboard.png');
-    await js('openDriver(3)');
+    await click('.srow[data-idx="3"]');
     await sleep(TRACE_MS);
     await shot('rival-popup.png');
-    await js('closeDriver()');
+    await click('.dmclose');
 
-    // compare mode with three drivers
-    await js('document.getElementById("compareBtn").click()');
+    // compare mode with three drivers (it opens with you and the car ahead: swap them for the top three)
+    await click('.comparebtn');
     await sleep(400);
-    await js('cmpSel = []; [0, 1, 2].forEach(i => toggleCompare(i))');
+    for (const idx of [2, 1, 0, 1, 2]) await click(`.pchip[data-idx="${idx}"]`);
     await sleep(COMPARE_MS);
     await shot('compare.png');
 
-    // the same drivers plotted by lap distance (throttle, last lap) once each has a completed lap
-    await js('document.querySelector("#cmpAxis [data-a=dist]").click(); document.querySelector("#cmpLap [data-l=last]").click(); document.querySelector("#cmpMetric [data-m=thr]").click()');
-    // 'last' must cover (nearly) the whole 5 km demo lap, not just the part seen after the page loaded mid-lap
-    const fullLap = '[0, 1, 2].every(i => { const t = lapTraces.get(i); return t && t.last && t.last.length > 20 && t.last[t.last.length - 1].d - t.last[0].d > 4500; })';
-    for (let i = 0; i < 120 && !(await js(fullLap)); i++) await sleep(1000);
-    await sleep(500);
+    // the same drivers plotted by lap distance (throttle, last lap) once each has a whole lap recorded:
+    // the page joined mid-lap, so wait for two 30 s demo laps
+    await click('.cmpaxis [data-a=dist]');
+    await click('.cmplap [data-l=last]');
+    await click('.cmpmetric [data-m=thr]');
+    await sleep(LAPS_MS);
     await shot('compare-lap.png');
 
-    // waiting screen with the format picker
+    // waiting screen with the format picker, showing a placeholder instead of this machine's real LAN address
+    // and the default port (the server refreshes its addresses every second, so keep them overridden)
+    const placeholder = setInterval(() => { live.state.setup = {...live.state.setup, ips: [{name: 'en0', address: '192.168.1.42'}], udpPort: 20777}; }, 50);
     await open(live.ports.http);
-    // show a placeholder instead of this machine's real LAN address, and the default port
-    await js('{ const orig = renderWait; renderWait = s => { orig(s); document.getElementById("waitIp").textContent = "192.168.1.42"; document.getElementById("waitPort").textContent = "20777"; }; }');
-    await js('document.querySelector("#fmtPick [data-format=\\"2026\\"]").click()');
+    await click('.fmtpick [data-format="2026"]');
     await sleep(300);
     await shot('waiting.png');
 
     // saved replays list
-    await js('document.getElementById("waitReplays").click()');
+    await click('.waitreplay');
     await sleep(900);
     await shot('replays.png');
+    clearInterval(placeholder);
 
     // replay mode: paused a second in
     await open(replay.ports.http);
-    await js('rpSend("seek", 1000); rpSend("pause")');
+    await click('.rp [title="Back to start"]');
+    await sleep(1000);
+    await click('.rpplay');
     await sleep(900);
     await shot('replay.png');
   } finally {

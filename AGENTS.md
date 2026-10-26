@@ -13,11 +13,15 @@ A live F1 25 telemetry dashboard ("Pit Wall") built on the `f1-udp-parser` TypeS
 | `strategy.js` | Strategy models measured from live data (tyre wear rate, pace trend, gap trend, pit loss) |
 | `replay.js`, `listen.js` | Recording file format (read and write), replay a recording to UDP; console-only listener |
 | `scripts/compress-recordings.js` | Converts old plain `.jsonl` recordings to compressed `.f1rec`, verified packet by packet |
-| `public/lib.js` | Pure dashboard logic (formatting, projections, map/trace helpers), shared by page and tests |
-| `public/app.js`, `layout.js`, `popup.js` | Page rendering, resizable sections, floating rival popup |
-| `test/` | Tests (Node's built-in runner); `test/fixtures/` holds real F1 25 packets |
+| `shared/` | Pure dashboard logic in TypeScript (formatting, projections, map/trace helpers, message types), used by the page, the server (compiled to `build/shared` by `npm run compile`) and the tests |
+| `web/` | The page: React + TypeScript (Vite, Zustand). Its own package: `npm --prefix web install`, built to `web/dist` by `npm run build:web` and served by `server.js` |
+| `web/src/store/` | State: `dashboard.ts` (the latest server message), `ui.ts` (settings and open windows), `layout.ts` (arrangement and sizes) |
+| `web/src/telemetry/buffers.ts`, `web/src/charts/` | Time series built from the messages, and the canvas drawings (pure functions) |
+| `web/src/components/` | Panels, the rival popup, compare mode, layout, replay controls, overlays |
+| `test/` | Server-side tests (Node's built-in runner); `test/fixtures/` holds real F1 25 packets |
+| `web/test/` | Page tests (Vitest, Testing Library, jsdom) |
 
-Run it with `npm start` (live, UDP 20777), `npm run demo` (synthetic data) or `npm run replay:dash -- recordings/<file>.f1rec` (play a recording with on-page controls), then open http://localhost:3000.
+Install with `npm run setup`. Run it with `npm start` (live, UDP 20777), `npm run demo` (synthetic data) or `npm run replay:dash -- recordings/<file>.f1rec` (play a recording with on-page controls), then open http://localhost:3000. While working on the page, run `npm run demo` and `npm run dev:web` (hot reload on http://localhost:5173, proxied to the server).
 
 ## Rule: new functionality comes with tests
 
@@ -28,33 +32,37 @@ Run it with `npm start` (live, UDP 20777), `npm run demo` (synthetic data) or `n
 - Changing existing behaviour means updating the tests that describe it, not deleting them.
 - Don't weaken or skip a failing test to get a change through. Fix the code, or fix the test if it was wrong, and say which.
 
-Run `npm test` before committing. A husky **pre-push** hook runs it too and blocks the push if anything fails. Don't bypass it with `--no-verify`.
+Run `npm test` before committing (it runs the server tests, then `npm run test:web`). A husky **pre-push** hook runs it too and blocks the push if anything fails. Don't bypass it with `--no-verify`.
 
-`npm run test:coverage` prints line/branch coverage. Keep the server-side files (`server.js`, `strategy.js`, `replay.js`, `listen.js`, `public/lib.js`) at or near 100% line coverage.
+`npm run test:coverage` prints line/branch coverage. Keep the server-side files (`server.js`, `strategy.js`, `replay.js`, `listen.js`, `shared/`) at or near 100% line coverage.
 
 ## Where tests go
 
 | Change in | Test file | How |
 | --- | --- | --- |
 | `strategy.js` | `test/strategy.test.js` | Feed synthetic lap arrays to `StrategyTracker`, compare with known answers |
-| `public/lib.js` | `test/lib.test.js` | Plain function calls (`require('../public/lib')`) |
+| `shared/` | `test/lib.test.js` | Plain function calls (`require('../build/shared')`) |
 | `src/` parsing | `test/parser.test.js` | Parse `fixturePackets()` (real F1 25 packets) |
-| `server.js` | `test/server.test.js` | `createDashboard({httpPort: 0, udpPort: 0, recDir: tmp, log: quiet})`; feed packets with `handlePacket()` or real UDP; always `stop()` |
+| `server.js` | `test/server.test.js` | `createDashboard({httpPort: 0, udpPort: 0, recDir: tmp, log: quiet})` (`offline()` also gives it a stand-in built page); feed packets with `handlePacket()` or real UDP; always `stop()` |
 | `replay.js`, `listen.js` | `test/replay.test.js`, `test/listen.test.js` | Exported functions, plus the command line via `spawn` |
 | `scripts/compress-recordings.js` | `test/replay.test.js` | `compressRecording()` / `main()` on copies of the fixture in the temp dir |
-| `public/app.js` (page) | `test/ui.test.js` | `loadPage()` from `test/helpers.js`; `push(dashboardState({...}))`; assert on the DOM and on `sent()` messages |
-| `public/layout.js` | `test/layout.test.js` | `loadPage()`; stub `getBoundingClientRect`; drive pointer/keyboard events |
-| `public/popup.js` | `test/popup.test.js` | `loadPage({width, height})`; drive pointer events |
+| `web/src/components/`, stores | `web/test/app.test.tsx` | `boot()` from `web/test/helpers.tsx`; `push(dashboardState({...}))`; assert on the DOM and on `sent()` messages |
+| `web/src/components/layout/` | `web/test/layout.test.tsx` | `boot()`; stub `getBoundingClientRect`; drive pointer/keyboard events |
+| `web/src/hooks/useFloatingRect.ts` (rival popup) | `web/test/popup.test.tsx` | `boot({width, height})`; drive pointer events |
+| `web/src/charts/` | `web/test/charts.test.ts` | Call the draw function with `fakeContext()`; assert on the logged canvas calls |
+| `web/src/styles.css` | `web/test/styles.test.ts` | Match the rules behaviour depends on |
 
-Helpers in `test/helpers.js`:
+Helpers:
 
-- `fixturePackets()`: 321 real F1 25 packets (Catalunya, 10 cars, 13 packet types).
-- `dashboardState(overrides)`: a full server message built from the demo generator.
-- `loadPage(options)`: the real page in jsdom with a fake WebSocket and canvas. `p.eval('name')` reads top-level page variables, `p.drawLog` records canvas calls.
+- `fixturePackets()` (`test/helpers.js`): 321 real F1 25 packets (Catalunya, 10 cars, 13 packet types).
+- `dashboardState(overrides)` (`web/test/helpers.tsx`): a full server message built from the server's demo generator.
+- `boot(options)` (`web/test/helpers.tsx`): the real page rendered in jsdom with a fake WebSocket and fresh stores; `push()`, `click()`, `key()`, `pointer()`, `sent()`.
 
 ## Writing code that stays testable
 
-- Put logic that doesn't need the DOM in `public/lib.js` (or a server-side module) as pure functions taking their inputs as arguments, and keep `app.js` to wiring and rendering.
+- Put logic that doesn't need the DOM in `shared/` (or a server-side module) as pure functions taking their inputs as arguments; keep components to rendering, and canvas drawing in `web/src/charts/` as pure functions of their input.
+- Components subscribe to the fields they show with `useServer(s => ...)` (return primitives or a flat object of them), not to the whole message; data only drawn on a canvas goes in `telemetry/buffers.ts`, not in React state.
+- Settings that are remembered keep their existing localStorage keys (`web/src/storage.ts`), so saved settings survive updates.
 - New server behaviour belongs inside `createDashboard()`, configurable through its options, never through module-level state.
 - Tests must not depend on fixed ports, the network, real time-of-day or files outside a temp dir. Use port `0`, `fs.mkdtempSync`, and close everything (dashboards, sockets, jsdom pages) even when an assertion fails.
 - If a test needs real game data that the fixture lacks, cut a small new fixture from a recording rather than committing a full recording (`recordings/` is git-ignored).

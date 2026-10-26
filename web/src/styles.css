@@ -1,4 +1,6 @@
-/* ===== Pit Wall — engineer's console ===== */
+/* ===== Pit Wall — engineer's console =====
+   Ported from the original page; per-instance ids became classes (.gearv, .speedv, .rpmv, .trace, .mapcv,
+   .cmpcanvas, .conntext) because the same readouts render in the dashboard, the rival popup and compare. */
 :root {
   --bg: #07080b; --card: #0f1118; --card2: #141722; --inset: #0a0b10; --line: #1f2330; --line2: #2b3042;
   --text: #eceef3; --dim: #7a8195; --faint: #454b5e;
@@ -21,6 +23,8 @@ body {
     repeating-linear-gradient(45deg, rgba(255, 255, 255, .012) 0 1px, transparent 1px 6px),
     var(--bg);
 }
+/* React mounts into #root; let header and main stay direct flex children of body, as the layout expects */
+#root { display: contents; }
 button { font-family: inherit; }
 .lbl { font: 600 10px/1.2 var(--f-display); letter-spacing: .22em; color: var(--dim); text-transform: uppercase; }
 
@@ -86,9 +90,9 @@ canvas { display: block; width: 100%; }
 .rev i.on.r { background: var(--red-hi); box-shadow: 0 0 10px var(--red-hi); }
 .rev i.on.b { background: var(--violet); box-shadow: 0 0 10px var(--violet); }
 .speedrow, .dmspeed { display: grid; grid-template-columns: 1fr 2fr 1fr; align-items: center; text-align: center; }
-#gear, #dmGear { font: 800 64px/1 var(--f-display); color: var(--amber); text-shadow: 0 0 24px rgba(255, 176, 32, .35); }
-#speed, #dmSpeed { font: 700 112px/.9 var(--f-display); letter-spacing: -.01em; font-variant-numeric: tabular-nums; }
-#rpm, #dmRpm { font: 600 26px/1.1 var(--f-display); font-variant-numeric: tabular-nums; }
+.driving .gearv, .dmbox .gearv { font: 800 64px/1 var(--f-display); color: var(--amber); text-shadow: 0 0 24px rgba(255, 176, 32, .35); }
+.driving .speedv, .dmbox .speedv { font: 700 112px/.9 var(--f-display); letter-spacing: -.01em; font-variant-numeric: tabular-nums; }
+.driving .rpmv, .dmbox .rpmv { font: 600 26px/1.1 var(--f-display); font-variant-numeric: tabular-nums; }
 .drs {
   margin: 8px auto 0; width: 64px; padding: 3px 0; border-radius: 5px; border: 1px solid var(--line2);
   font: 800 13px/1.2 var(--f-display); letter-spacing: .16em; color: var(--faint);
@@ -105,7 +109,7 @@ canvas { display: block; width: 100%; }
 .steerbar { position: relative; height: 10px; background: var(--inset); border: 1px solid var(--line); border-radius: 5px; }
 .steerbar::after { content: ""; position: absolute; left: 50%; top: -4px; bottom: -4px; width: 1px; background: var(--line2); }
 .steerbar i { position: absolute; top: -1px; bottom: -1px; width: 12px; margin-left: -6px; left: 50%; background: var(--blue); border-radius: 5px; box-shadow: 0 0 10px var(--blue); z-index: 1; }
-#trace, #dmTrace { height: 120px; background: var(--inset); border: 1px solid var(--line); border-radius: 8px; }
+.driving .trace, .dmbox .trace { height: 120px; background: var(--inset); border: 1px solid var(--line); border-radius: 8px; }
 
 /* ----- Lap timing ----- */
 .lapinfo { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; }
@@ -200,7 +204,7 @@ canvas { display: block; width: 100%; }
 .dc.l3 b, .dc.l3 span { color: #fff; } .dc.l3 .dbar i { background: var(--red-hi); }
 
 /* ----- Track map ----- */
-#map { aspect-ratio: 1; background: radial-gradient(circle at 50% 40%, #10131c, var(--inset) 70%); border: 1px solid var(--line); border-radius: 8px; }
+.mapcv { aspect-ratio: 1; background: radial-gradient(circle at 50% 40%, #10131c, var(--inset) 70%); border: 1px solid var(--line); border-radius: 8px; }
 .g { display: flex; justify-content: space-between; margin-top: 8px; font: 600 10px/1 var(--f-display); letter-spacing: .18em; color: var(--dim); }
 .g b { color: var(--text); font: 500 13px/1 var(--f-mono); margin-left: 6px; }
 
@@ -267,15 +271,15 @@ canvas { display: block; width: 100%; }
 .dmgrid { display: grid; grid-template-columns: 1fr 1fr; gap: clamp(20px, 3vw, 52px); }
 .dmcol { min-width: 0; display: flex; flex-direction: column; }
 .dmbox .lbl { font-size: clamp(10px, 1.4vh, 13px); }
-#dmGear { font-size: clamp(56px, 9vh, 110px); }
-#dmSpeed { font-size: clamp(90px, 17vh, 200px); }
-#dmRpm { font-size: clamp(24px, 3.8vh, 42px); }
+.dmbox .gearv { font-size: clamp(56px, 9vh, 110px); }
+.dmbox .speedv { font-size: clamp(90px, 17vh, 200px); }
+.dmbox .rpmv { font-size: clamp(24px, 3.8vh, 42px); }
 .dmbox .drs { width: 80px; font-size: 14px; padding: 5px 0; }
 .dmbox .pedals { margin: clamp(10px, 1.8vh, 22px) 0; gap: 24px; }
 .dmbox .bar { width: 34px; height: clamp(54px, 9vh, 120px); }
 .dmbox .pedal, .dmbox .steer { font-size: 12px; }
 .dmbox .steerbar { height: 14px; }
-#dmTrace { height: clamp(90px, 16vh, 230px); }
+.dmbox .trace { height: clamp(90px, 16vh, 230px); }
 .dmlap { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: clamp(10px, 1.8vh, 22px); }
 .dmlap b { font: 700 clamp(17px, 2.6vh, 28px)/1.3 var(--f-mono); font-variant-numeric: tabular-nums; }
 .compound.big { font-size: clamp(16px, 2.4vh, 24px); margin-bottom: clamp(6px, 1.2vh, 14px); }
@@ -331,13 +335,13 @@ canvas { display: block; width: 100%; }
 
   /* every readout scales with its own section */
   .rev { margin-bottom: 1.6cqh; } .rev i { height: clamp(5px, 2.4cqh, 12px); }
-  #gear { font-size: clamp(26px, min(16cqh, 11cqw), 120px); }
-  #speed { font-size: clamp(36px, min(24cqh, 17cqw), 220px); }
-  #rpm { font-size: clamp(14px, min(5.6cqh, 3.8cqw), 38px); }
+  .driving .gearv { font-size: clamp(26px, min(16cqh, 11cqw), 120px); }
+  .driving .speedv { font-size: clamp(36px, min(24cqh, 17cqw), 220px); }
+  .driving .rpmv { font-size: clamp(14px, min(5.6cqh, 3.8cqw), 38px); }
   .driving .drs { margin-top: 1cqh; }
   .driving .pedals { margin: 1.6cqh 0; }
   .driving .pedal .bar { height: clamp(24px, 12cqh, 110px); }
-  #trace { flex: 1; min-height: 20px; height: 0; }
+  .driving .trace { flex: 1; min-height: 20px; height: 0; }
 
   .lap { justify-content: space-between; }
   .lap .curbox { margin: 0; }
@@ -352,7 +356,7 @@ canvas { display: block; width: 100%; }
   .tyres .tyrebox { flex: 1; height: auto; min-height: 110px; }
   .tyres .dc b { font-size: clamp(16px, min(7cqh, 4.4cqw), 30px); }
   .tyres .dc span { font-size: clamp(9px, min(3.2cqh, 2.2cqw), 12px); }
-  #map { flex: 1; min-height: 0; height: 0; aspect-ratio: auto; }
+  .mapcv { flex: 1; min-height: 0; height: 0; aspect-ratio: auto; }
 }
 /* Damage tiles: full size when there is room, compact when the section is short, hidden only when it is tiny.
    The car diagram keeps showing wing/floor/sidepod damage in every case. */
@@ -406,7 +410,7 @@ canvas { display: block; width: 100%; }
 .tabs button:last-child { border-right: 0; }
 .tabs button:hover { color: var(--text); }
 .tabs button.on { background: rgba(225, 6, 0, .2); color: #fff; }
-#cmpCanvas { height: clamp(100px, 18vh, 220px); }
+.cmpcanvas { height: clamp(100px, 18vh, 220px); }
 
 .cmpcols { min-height: 0; overflow: auto; display: grid; grid-template-columns: repeat(var(--n, 1), minmax(260px, 1fr)); gap: 12px; align-content: start; }
 .cmpempty { grid-column: 1 / -1; padding: 60px 0; text-align: center; color: var(--dim); font: 600 14px/1 var(--f-display); letter-spacing: .16em; text-transform: uppercase; border: 1px dashed var(--line2); border-radius: 10px; }
@@ -455,8 +459,8 @@ canvas { display: block; width: 100%; }
 .cc { container-type: inline-size; }
 .cctyrehead { display: flex; align-items: center; justify-content: space-between; }
 .cc .tyrebox { height: clamp(210px, 30vh, 300px); }
-.cc .ccmeters { margin-top: 0; }
-@container (max-width: 330px) { .cc .ccmeters { grid-template-columns: 1fr; gap: 8px; } }
+.cc .meters { margin-top: 0; }
+@container (max-width: 330px) { .cc .meters { grid-template-columns: 1fr; gap: 8px; } }
 @container (max-width: 560px) { .cc .dmg { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @container (max-width: 300px) { .cc .ti-stats { display: none; } }
 .cc .dc b { font-size: 22px; }
@@ -467,7 +471,7 @@ canvas { display: block; width: 100%; }
   .cmpbar { padding-bottom: 8px; }
   .cmpchart { padding: 8px 12px 6px; }
   .cmpchead { margin-bottom: 2px; }
-  #cmpCanvas { height: clamp(70px, 13vh, 150px); }
+  .cmpcanvas { height: clamp(70px, 13vh, 150px); }
   .cmpcols { overflow: hidden; grid-auto-rows: minmax(0, 1fr); align-content: stretch; gap: 10px; }
   .cc { container-type: size; overflow: hidden; gap: clamp(3px, 1.1cqh, 9px); padding: 8px 11px 10px; }
   .cc > * { flex: none; }
@@ -489,7 +493,7 @@ canvas { display: block; width: 100%; }
   .ccstats dd { margin: 0; font-size: clamp(12px, 2.1cqh, 16px); }
   .cctyrehead { margin: 0; }
   .cc .tyrebox { flex: 1 1 0; height: auto; min-height: 84px; }
-  .cc .ccmeters { gap: 10px; }
+  .cc .meters { gap: 10px; }
   .cc .mhead { margin-bottom: 3px; } .cc .mhead b { font-size: 13px; }
   .cc .seg { height: 8px; }
   .cc .dmg { gap: 4px; margin: 0; }
@@ -500,7 +504,7 @@ canvas { display: block; width: 100%; }
 }
 /* short windows: shed the least important rows first (the car diagram still shows damage) */
 @container (max-height: 520px) { .cc .dmg { display: none; } }
-@container (max-height: 400px) { .cc .ccmeters { display: none; } }
+@container (max-height: 400px) { .cc .meters { display: none; } }
 @container (max-height: 330px) { .cc .ccstats > div:nth-child(n+4) { display: none; } }
 @media (max-width: 899px) {
   .cc { container-type: inline-size; }
@@ -533,14 +537,14 @@ body.popup-drag, body.popup-drag * { cursor: grabbing !important; user-select: n
 .dmcol { min-height: 0; overflow: hidden; gap: clamp(3px, 1.2cqh, 10px); }
 .dmcol > * { flex: none; }
 
-#dmGear { font-size: clamp(28px, min(11cqh, 6cqw), 90px); }
-#dmSpeed { font-size: clamp(44px, min(20cqh, 11cqw), 170px); }
-#dmRpm { font-size: clamp(14px, min(4cqh, 2.4cqw), 34px); }
+.dmbox .gearv { font-size: clamp(28px, min(11cqh, 6cqw), 90px); }
+.dmbox .speedv { font-size: clamp(44px, min(20cqh, 11cqw), 170px); }
+.dmbox .rpmv { font-size: clamp(14px, min(4cqh, 2.4cqw), 34px); }
 .dmbox .drs { width: 64px; padding: 2px 0; font-size: 12px; margin-top: 3px; }
 .dmbox .pedals { margin: 0; gap: 16px; }
 .dmbox .pedal .bar { width: 28px; height: clamp(34px, 9cqh, 80px); }
 .dmbox .pedal, .dmbox .steer { font-size: 10px; }
-#dmTrace { flex: 1 1 0; height: 0; min-height: 36px; }
+.dmbox .trace { flex: 1 1 0; height: 0; min-height: 36px; }
 .dmlap { margin: 0; gap: 6px; }
 .dmlap > div { padding: clamp(3px, 1cqh, 9px) 10px; }
 .dmlap b { font-size: clamp(13px, 2.6cqh, 24px); }
@@ -573,14 +577,14 @@ body.popup-drag, body.popup-drag * { cursor: grabbing !important; user-select: n
 @container (max-width: 640px) {
   .dmgrid { grid-template-columns: 1fr; grid-auto-rows: max-content; align-content: start; overflow: auto; }
   .dmcol { overflow: visible; }
-  #dmTrace { flex: none; height: 90px; }
+  .dmbox .trace { flex: none; height: 90px; }
   .dm .tyrebox { flex: none; height: 230px; }
   .dmbox .dmg { display: grid; }
 }
 
 .cmpctrls { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
 .tabs[hidden] { display: none; }
-#cmpCanvas { cursor: crosshair; }
+.cmpcanvas { cursor: crosshair; }
 
 /* ===== Strategy panel ===== */
 .wearlimit { display: inline-flex; align-items: center; gap: 5px; font: 700 10px/1 var(--f-display); letter-spacing: .14em; color: var(--dim); }
@@ -665,7 +669,7 @@ body.popup-drag, body.popup-drag * { cursor: grabbing !important; user-select: n
 .replaychip.paused i { border: 0; width: 8px; height: 12px; border-left: 3px solid #1a1300; border-right: 3px solid #1a1300; }
 body.replaying header { border-bottom-color: var(--amber); box-shadow: 0 1px 0 var(--amber), 0 12px 24px -18px var(--amber); }
 body.replaying .dot.live { background: var(--amber); box-shadow: 0 0 8px var(--amber); }
-body.replaying #connText { color: var(--amber); }
+body.replaying .conntext { color: var(--amber); }
 .rp {
   position: fixed; z-index: 40; width: 390px; left: 50%; bottom: 18px; transform: translateX(-50%);
   background: var(--card2); border: 1px solid var(--amber); border-radius: 12px; color: var(--text);
@@ -803,7 +807,7 @@ body.lodragging, body.lodragging * { cursor: grabbing !important; }
 .ccspeed .batpct { font-size: clamp(13px, 2.4cqh, 17px); }
 .ccspeed .batlbl { font-size: clamp(11px, 2cqh, 14px); }
 .ccspeed .drs { width: 64px; font-size: 13px; }
-#dmRpm { font-size: clamp(22px, min(6cqh, 3.6cqw), 46px); }
+.dmbox .rpmv { font-size: clamp(22px, min(6cqh, 3.6cqw), 46px); }
 .dmbox .bat { width: clamp(90px, 15cqw, 140px); }
 .dmbox .batbody { height: clamp(26px, 5.4cqh, 38px); }
 .dmbox .batpct { font-size: clamp(14px, 2.8cqh, 20px); }
